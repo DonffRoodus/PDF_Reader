@@ -55,7 +55,6 @@ class PDFViewer(QWidget):
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.single_double_canvas)
         self.view_stack.addWidget(self.continuous_page_container)
-
         self.scroll_area.setWidget(self.view_stack) # ScrollArea now contains the StackedWidget
         self.layout.addWidget(self.scroll_area)
 
@@ -111,22 +110,24 @@ class PDFViewer(QWidget):
         
         self._continuous_render_zoom = current_render_zoom
         
-        # Create placeholder labels for all pages but only render visible ones
+        # Use the current page dimensions as a template for all pages (performance optimization)
+        # Most PDFs have consistent page sizes
+        template_page_rect = self.doc.load_page(self.current_page).bound()
+        template_width = int(template_page_rect.width * current_render_zoom)
+        template_height = int(template_page_rect.height * current_render_zoom)
+        
+        # Create placeholder labels for all pages with template dimensions
         for i in range(self.doc.page_count):
-            # Get page dimensions to calculate placeholder size
-            page_rect = self.doc.load_page(i).bound()
-            placeholder_width = int(page_rect.width * current_render_zoom)
-            placeholder_height = int(page_rect.height * current_render_zoom)
-            
             page_label = QLabel()
-            page_label.setFixedSize(placeholder_width, placeholder_height)
+            page_label.setFixedSize(template_width, template_height)
             page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             page_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
             page_label.setText(f"Page {i+1}")
             
             self.continuous_page_layout.addWidget(page_label)
             self._page_labels_continuous.append(page_label)
-          # Render the current page and a few around it initially
+        
+        # Render the current page and a few around it initially
         self._render_pages_around_current()
           # Initial scroll to current page if needed
         # self.jump_to_page(self.current_page, force_scroll_continuous=True)
@@ -207,16 +208,15 @@ class PDFViewer(QWidget):
 
         self.single_double_canvas.setPixmap(final_pixmap)
         self.single_double_canvas.adjustSize()
-
+        
     def _set_view_mode_internal(self, mode: ViewMode):
         self.view_mode = mode
-        
+
     def set_view_mode(self, mode: ViewMode, force_setup=False):
         if not self.doc: 
             return
         if self.view_mode == mode and not force_setup:
             return # No change needed unless forced
-
         previous_mode = self.view_mode
         self._set_view_mode_internal(mode) # self.view_mode = mode
 
@@ -226,16 +226,42 @@ class PDFViewer(QWidget):
                 self._setup_continuous_view() # Setup or re-setup if forced or mode changed
                 self.jump_to_page(self.current_page, force_scroll_continuous=True) # Ensure correct scroll position
         else: # Single, Fit Page, Fit Width, Double Page
-            # Clear any existing content from single canvas first
-            self.single_double_canvas.clear()
+            # Ensure we're switching to the single canvas first
             self.view_stack.setCurrentWidget(self.single_double_canvas)
+            
+            # Clear any existing content from single canvas
+            self.single_double_canvas.clear()
+            self.single_double_canvas.setPixmap(QPixmap())  # Clear any existing pixmap
+            
+            # Reset styling
+            self.single_double_canvas.setStyleSheet("background-color: #e0e0e0;")
+            self.single_double_canvas.setText("Loading...")
+            
+            # Process events to ensure UI state is updated
+            QApplication.processEvents()
+            
             if mode == ViewMode.DOUBLE_PAGE and self.current_page % 2 != 0 and self.current_page > 0:
                  self.current_page -= 1 # Ensure left page is shown for double view
-            # Always render the page when switching from continuous to single/double modes
-            self.render_page() # Render single/double view
-            # Ensure the scroll area properly updates and refreshes
+            
+            # Force a complete re-render of the page content
+            try:
+                self.render_page() # Render single/double view
+                
+                # Additional check to ensure content is displayed
+                if self.single_double_canvas.pixmap() is None or self.single_double_canvas.pixmap().isNull():
+                    # If still no content, try one more time
+                    QApplication.processEvents()
+                    self.render_page()
+                    
+            except Exception as e:
+                print(f"Error rendering page in view mode change: {e}")
+                self.single_double_canvas.setText(f"Error rendering page: {e}")
+            
+            # Force widget updates and repaint
+            self.single_double_canvas.update()
+            self.view_stack.update()
             self.scroll_area.update()
-            self.scroll_area.repaint()
+            self.update()
         
         self.view_mode_changed.emit(self.view_mode)
 
@@ -251,12 +277,15 @@ class PDFViewer(QWidget):
             # Instead of re-rendering all pages, just update zoom and clear rendered cache
             self._continuous_render_zoom = self.zoom_factor
             self._rendered_pages.clear()
-            # Update placeholder sizes
+            
+            # Use template page size for performance optimization
+            template_page_rect = self.doc.load_page(self.current_page).bound()
+            template_width = int(template_page_rect.width * self._continuous_render_zoom)
+            template_height = int(template_page_rect.height * self._continuous_render_zoom)
+            
+            # Update placeholder sizes using template dimensions
             for i, label in enumerate(self._page_labels_continuous):
-                page_rect = self.doc.load_page(i).bound()
-                new_width = int(page_rect.width * self._continuous_render_zoom)
-                new_height = int(page_rect.height * self._continuous_render_zoom)
-                label.setFixedSize(new_width, new_height)
+                label.setFixedSize(template_width, template_height)
                 label.clear()  # Clear rendered content
                 label.setText(f"Page {i+1}")
                 label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
@@ -267,7 +296,6 @@ class PDFViewer(QWidget):
             self.zoom_factor *= 1.2
             self.render_page()
         self.view_mode_changed.emit(self.view_mode)
-
     def zoom_out(self):
         if not self.doc: return
 
@@ -280,12 +308,15 @@ class PDFViewer(QWidget):
             # Same optimization as zoom_in
             self._continuous_render_zoom = self.zoom_factor
             self._rendered_pages.clear()
-            # Update placeholder sizes
+            
+            # Use template page size for performance optimization
+            template_page_rect = self.doc.load_page(self.current_page).bound()
+            template_width = int(template_page_rect.width * self._continuous_render_zoom)
+            template_height = int(template_page_rect.height * self._continuous_render_zoom)
+            
+            # Update placeholder sizes using template dimensions
             for i, label in enumerate(self._page_labels_continuous):
-                page_rect = self.doc.load_page(i).bound()
-                new_width = int(page_rect.width * self._continuous_render_zoom)
-                new_height = int(page_rect.height * self._continuous_render_zoom)
-                label.setFixedSize(new_width, new_height)
+                label.setFixedSize(template_width, template_height)
                 label.clear()  # Clear rendered content
                 label.setText(f"Page {i+1}")
                 label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
@@ -417,7 +448,6 @@ class PDFViewer(QWidget):
         if (page_idx < 0 or page_idx >= len(self._page_labels_continuous) or 
             page_idx in self._rendered_pages):
             return
-        
         try:
             page = self.doc.load_page(page_idx)
             mat = fitz.Matrix(self._continuous_render_zoom, self._continuous_render_zoom)
@@ -426,6 +456,14 @@ class PDFViewer(QWidget):
             pixmap = QPixmap.fromImage(img)
             
             page_label = self._page_labels_continuous[page_idx]
+            
+            # Adjust label size to match actual page dimensions if different from template
+            page_rect = page.bound()
+            actual_width = int(page_rect.width * self._continuous_render_zoom)
+            actual_height = int(page_rect.height * self._continuous_render_zoom)
+            if page_label.width() != actual_width or page_label.height() != actual_height:
+                page_label.setFixedSize(actual_width, actual_height)
+            
             page_label.setPixmap(pixmap)
             page_label.setText("")  # Clear placeholder text
             page_label.setStyleSheet("")  # Clear placeholder styling
