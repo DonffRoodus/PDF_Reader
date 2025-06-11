@@ -1,6 +1,6 @@
 import sys
 from enum import Enum
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFileDialog, QTabWidget, QPushButton, QHBoxLayout, QToolBar, QToolButton, QLabel, QLineEdit, QListView, QDockWidget, QListWidget, QListWidgetItem, QScrollArea, QStackedWidget
+from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QFileDialog, QTabWidget, QPushButton, QHBoxLayout, QToolBar, QToolButton, QLabel, QLineEdit, QListView, QDockWidget, QListWidget, QListWidgetItem, QScrollArea, QStackedWidget, QSpacerItem, QSizePolicy
 from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QActionGroup, QImage # Added QImage
 from PyQt6.QtCore import Qt, QSize, QUrl, pyqtSignal
 import fitz  # PyMuPDF
@@ -19,175 +19,224 @@ class PDFViewer(QWidget):
     current_page_changed_in_continuous_scroll = pyqtSignal(int)
 
     def __init__(self, file_path=None):
-        super().__init__()        
+        super().__init__()
         self.doc = None
         self.file_path = None
         self.current_page = 0
-        self.zoom_factor = 1.0  # Base zoom factor for non-fit modes
-        self._last_auto_zoom_level = 1.0 # Stores the zoom level calculated by fit modes
+        self.zoom_factor = 1.0
+        self._last_auto_zoom_level = 1.0
         self.view_mode = ViewMode.SINGLE_PAGE
-        self._page_labels_continuous = [] # Store QLabel references for continuous view
-        self._continuous_render_zoom = 1.0 # Store zoom for continuous view
-        self._rendered_pages = set() # Track which pages have been rendered
-
+        
+        # --- New attributes for virtualization ---
+        self._page_widgets = [] # Will hold widgets or None
+        self._page_geometries = [] # Store calculated page sizes
+        self._continuous_render_zoom = 1.0
+        
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0) # Remove margins for the main layout
+        self.layout.setContentsMargins(0, 0, 0, 0)
 
         self.scroll_area = QScrollArea(self)
-        self.scroll_area.setWidgetResizable(True) # Important for fit modes to work with scroll area
+        self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        
-        # Canvas for single page, fit modes, double page
-        self.single_double_canvas = QLabel("Single/Double Canvas") 
-        self.single_double_canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.single_double_canvas.setStyleSheet("background-color: #e0e0e0;") # Placeholder color
 
-        # Container for continuous scrolling pages
-        self.continuous_page_container = QWidget() # This will hold a QVBoxLayout
+        self.single_double_canvas = QLabel("Single/Double Canvas")
+        self.single_double_canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.single_double_canvas.setStyleSheet("background-color: #e0e0e0;")
+
+        self.continuous_page_container = QWidget()
         self.continuous_page_layout = QVBoxLayout(self.continuous_page_container)
         self.continuous_page_layout.setContentsMargins(5, 5, 5, 5)
-        self.continuous_page_layout.setSpacing(10) # Spacing between pages
+        self.continuous_page_layout.setSpacing(10)
         self.continuous_page_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-        self.continuous_page_container.setStyleSheet("background-color: #d0d0d0;") # Placeholder color
+        self.continuous_page_container.setStyleSheet("background-color: #d0d0d0;")
 
-        # Use QStackedWidget to manage the two views
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.single_double_canvas)
         self.view_stack.addWidget(self.continuous_page_container)
-        self.scroll_area.setWidget(self.view_stack) # ScrollArea now contains the StackedWidget
+        self.scroll_area.setWidget(self.view_stack)
         self.layout.addWidget(self.scroll_area)
 
-        self.scroll_area.verticalScrollBar().valueChanged.connect(self._handle_continuous_scroll)
-
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self._update_visible_pages)
+        # Also connect to resize events to update visible pages
+        self.scroll_area.viewport().installEventFilter(self)
+        
         if file_path:
             self.load_pdf(file_path)
+
+    def eventFilter(self, source, event):
+        if source == self.scroll_area.viewport() and event.type() == event.Type.Resize:
+            self._update_visible_pages()
+        return super().eventFilter(source, event)
 
     def load_pdf(self, file_path):
         self.file_path = file_path
         try:
             self.doc = fitz.open(file_path)
-            self.set_view_mode(ViewMode.SINGLE_PAGE, force_setup=True) # Initial setup
+            self.set_view_mode(ViewMode.SINGLE_PAGE, force_setup=True)
         except Exception as e:
             print(f"Error opening PDF {file_path}: {e}")
             self.single_double_canvas.setText("Could not load PDF.")
             self.view_stack.setCurrentWidget(self.single_double_canvas)
-        
+
     def _clear_continuous_view(self):
         while self.continuous_page_layout.count():
-            child = self.continuous_page_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-        self._page_labels_continuous = []
+            item = self.continuous_page_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._page_widgets = []
+        self._page_geometries = []
+
+    def _update_visible_pages(self, value=None):
+        if not self.doc or self.view_mode != ViewMode.CONTINUOUS_SCROLL or not self._page_widgets:
+            return
+
+        viewport_rect = self.scroll_area.viewport().rect()
+        
+        # Determine which pages are visible
+        visible_pages = set()
+        current_y = self.continuous_page_layout.contentsMargins().top()
+        
+        for i in range(self.doc.page_count):
+            page_height = self._page_geometries[i].height()
+            spacing = self.continuous_page_layout.spacing()
+            
+            page_top = current_y
+            page_bottom = current_y + page_height
+            
+            # Check if this page is in the visible area (with a buffer)
+            if page_bottom >= self.scroll_area.verticalScrollBar().value() - viewport_rect.height() and \
+               page_top <= self.scroll_area.verticalScrollBar().value() + viewport_rect.height() * 2:
+                visible_pages.add(i)
+
+            current_y += page_height + spacing
+
+        # Inflate visible pages that don't have a widget yet
+        for i in sorted(list(visible_pages)):
+            if self._page_widgets[i] is None:
+                self._inflate_page(i)
+        
+        # Deflate pages that are no longer visible
+        for i in range(self.doc.page_count):
+            if i not in visible_pages and self._page_widgets[i] is not None:
+                self._deflate_page(i)
+        
+        self._update_current_page_in_scroll_view()
+
+    def _inflate_page(self, i):
+        """Replaces a spacer with a real, rendered page widget."""
+        if not self.doc or not (0 <= i < len(self._page_widgets)) or self._page_widgets[i] is not None:
+            return
+
+        size = self._page_geometries[i]
+        page_label = QLabel()
+        page_label.setFixedSize(size)
+        page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Render the pixmap
+        page = self.doc.load_page(i)
+        mat = fitz.Matrix(self._continuous_render_zoom, self._continuous_render_zoom)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(img)
+        page_label.setPixmap(pixmap)
+        
+        # Replace the spacer item with our new widget
+        item = self.continuous_page_layout.takeAt(i)
+        del item
+        self.continuous_page_layout.insertWidget(i, page_label)
+        self._page_widgets[i] = page_label
+    
+    def _deflate_page(self, i):
+        """Replaces a real widget with a lightweight spacer to save memory."""
+        if not (0 <= i < len(self._page_widgets)) or self._page_widgets[i] is None:
+            return
+
+        widget = self._page_widgets[i]
+        
+        # Replace the widget with a spacer item
+        self.continuous_page_layout.removeWidget(widget)
+        widget.deleteLater()
+        
+        size = self._page_geometries[i]
+        spacer = QSpacerItem(size.width(), size.height(), QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self.continuous_page_layout.insertItem(i, spacer)
+        
+        self._page_widgets[i] = None
+
+    def _update_current_page_in_scroll_view(self):
+        if self.view_mode != ViewMode.CONTINUOUS_SCROLL:
+            return
+
+        viewport_center = self.scroll_area.verticalScrollBar().value() + self.scroll_area.viewport().height() / 2
+        
+        current_y = self.continuous_page_layout.contentsMargins().top()
+        best_page_idx = 0
+        
+        for i in range(self.doc.page_count):
+            page_height = self._page_geometries[i].height()
+            if current_y + page_height / 2 > viewport_center:
+                break
+            best_page_idx = i
+            current_y += page_height + self.continuous_page_layout.spacing()
+            
+        if self.current_page != best_page_idx:
+            self.current_page = best_page_idx
+            self.current_page_changed_in_continuous_scroll.emit(self.current_page)
+
     def _setup_continuous_view(self):
         if not self.doc:
             return
 
-        # Only clear and rebuild if this is a significant change
-        needs_full_rebuild = (
-            len(self._page_labels_continuous) != self.doc.page_count or
-            not self._page_labels_continuous
-        )
-
-        if needs_full_rebuild:
-            # Clear previous page labels from the layout
-            for i in reversed(range(self.continuous_page_layout.count())): 
-                widget = self.continuous_page_layout.itemAt(i).widget()
-                if widget is not None:
-                    widget.deleteLater()
-            self._page_labels_continuous = []
-
-        # Always clear rendered pages cache when zoom changes
-        self._rendered_pages.clear()
-
-        # Determine zoom for continuous view (could be FIT_WIDTH or manual zoom)
-        current_render_zoom = self.zoom_factor
-        if self.view_mode == ViewMode.FIT_WIDTH:
-            vp_width = self.scroll_area.viewport().width()
-            # Use a cached page rect if available to avoid loading
-            if hasattr(self, '_template_page_rect'):
-                sample_page_rect = self._template_page_rect
-            else:
-                sample_page_rect = self.doc.load_page(self.current_page).bound()
-                self._template_page_rect = sample_page_rect
-            
-            if vp_width > 0 and sample_page_rect.width > 0:
-                scrollbar_width = 0
-                if self.scroll_area.verticalScrollBar().isVisible():
-                    scrollbar_width = self.scroll_area.verticalScrollBar().width()
-                
-                available_width = vp_width - scrollbar_width - self.continuous_page_layout.contentsMargins().left() - self.continuous_page_layout.contentsMargins().right()
-                current_render_zoom = available_width / sample_page_rect.width
-                self._last_auto_zoom_level = current_render_zoom
-            else:
-                current_render_zoom = self.zoom_factor
+        self._clear_continuous_view()
         
-        self._continuous_render_zoom = current_render_zoom
-        
-        if needs_full_rebuild:
-            # Use cached template dimensions for performance
-            if hasattr(self, '_template_page_rect'):
-                template_page_rect = self._template_page_rect
-            else:
-                template_page_rect = self.doc.load_page(self.current_page).bound()
-                self._template_page_rect = template_page_rect
-            
-            template_width = int(template_page_rect.width * current_render_zoom)
-            template_height = int(template_page_rect.height * current_render_zoom)
-            
-            # Create placeholder labels for all pages with template dimensions
-            for i in range(self.doc.page_count):
-                page_label = QLabel()
-                page_label.setFixedSize(template_width, template_height)
-                page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                page_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
-                page_label.setText(f"Page {i+1}")
-                
-                self.continuous_page_layout.addWidget(page_label)
-                self._page_labels_continuous.append(page_label)
+        # Default to a fit-width zoom for performance on initial load.
+        QApplication.processEvents() # Ensure viewport has a size
+        vp_width = self.scroll_area.viewport().width()
+        if vp_width > 20:
+            sample_page_rect = self.doc.load_page(self.current_page).bound()
+            if sample_page_rect.width > 0:
+                margins = self.continuous_page_layout.contentsMargins()
+                available_width = vp_width - margins.left() - margins.right() - 20 # Buffer for scrollbar
+                self.zoom_factor = available_width / sample_page_rect.width
         else:
-            # Just update existing label sizes for zoom changes
-            if hasattr(self, '_template_page_rect'):
-                template_page_rect = self._template_page_rect
-            else:
-                template_page_rect = self.doc.load_page(self.current_page).bound()
-                self._template_page_rect = template_page_rect
-            
-            template_width = int(template_page_rect.width * current_render_zoom)
-            template_height = int(template_page_rect.height * current_render_zoom)
-            
-            for i, label in enumerate(self._page_labels_continuous):
-                label.setFixedSize(template_width, template_height)
-                label.clear()  # Clear rendered content
-                label.setText(f"Page {i+1}")
-                label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
-        
-        # Render the current page and a few around it initially
-        self._render_pages_around_current()
+            self.zoom_factor = 1.0
+        self._continuous_render_zoom = self.zoom_factor
 
-    def render_page(self): # This now primarily handles SINGLE and DOUBLE page modes
+        # Pre-calculate all page geometries but don't create widgets
+        for i in range(self.doc.page_count):
+            page_rect = self.doc.load_page(i).bound()
+            width = int(page_rect.width * self._continuous_render_zoom)
+            height = int(page_rect.height * self._continuous_render_zoom)
+            self._page_geometries.append(QSize(width, height))
+            self._page_widgets.append(None) # Placeholder for not-yet-created widget
+            
+            # Add a lightweight spacer to represent the page in the layout
+            spacer = QSpacerItem(width, height, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+            self.continuous_page_layout.addSpacerItem(spacer)
+        
+        self.jump_to_page(self.current_page)
+
+
+    def render_page(self): # Handles SINGLE and DOUBLE page modes
         if not self.doc:
             self.single_double_canvas.clear()
             self.single_double_canvas.setText("Could not load PDF.")
             return
 
         if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
-            # For continuous scroll, rendering is handled by _setup_continuous_view (for all pages)
-            # Just ensure the correct widget is visible in the stack
             self.view_stack.setCurrentWidget(self.continuous_page_container)
             return
-        
-        # For single/double page modes, ensure the single_double_canvas is visible
-        self.view_stack.setCurrentWidget(self.single_double_canvas)
 
+        self.view_stack.setCurrentWidget(self.single_double_canvas)
         page_left = self.doc.load_page(self.current_page)
         page_rect_left = page_left.bound()
         vp_width = self.scroll_area.viewport().width()
         vp_height = self.scroll_area.viewport().height()
-
         current_render_zoom = self.zoom_factor
 
         if self.view_mode == ViewMode.FIT_PAGE:
+            # ... (rest of this method is unchanged)
             target_width = page_rect_left.width
             target_height = page_rect_left.height
             if self.view_mode == ViewMode.DOUBLE_PAGE and self.current_page + 1 < self.doc.page_count:
@@ -213,34 +262,26 @@ class PDFViewer(QWidget):
             else:
                 current_render_zoom = 1.0
             self._last_auto_zoom_level = current_render_zoom
-        # For SINGLE_PAGE and DOUBLE_PAGE (non-fit), use self.zoom_factor directly
-        # For CONTINUOUS_SCROLL, this direct render_page is not the main path.
-
-        # --- Render Left Page (and Right Page if Double View) --- 
         mat = fitz.Matrix(current_render_zoom, current_render_zoom)
         pix_left = self.doc.load_page(self.current_page).get_pixmap(matrix=mat, alpha=False)
         final_pixmap = QPixmap()
-
         if self.view_mode == ViewMode.DOUBLE_PAGE and self.current_page + 1 < self.doc.page_count:
             pix_right = self.doc.load_page(self.current_page + 1).get_pixmap(matrix=mat, alpha=False)
-            
             img_left_q = QPixmap()
             img_left_q.loadFromData(pix_left.tobytes("ppm"))
             img_right_q = QPixmap()
             img_right_q.loadFromData(pix_right.tobytes("ppm"))
-            
             final_pixmap = QPixmap(img_left_q.width() + img_right_q.width(), max(img_left_q.height(), img_right_q.height()))
             final_pixmap.fill(Qt.GlobalColor.white) 
             painter = QPainter(final_pixmap)
             painter.drawPixmap(0,0, img_left_q)
             painter.drawPixmap(img_left_q.width(), 0, img_right_q)
             painter.end()
-        else: # Single page or last page in double view
+        else:
             final_pixmap.loadFromData(pix_left.tobytes("ppm"))
-
         self.single_double_canvas.setPixmap(final_pixmap)
         self.single_double_canvas.adjustSize()
-        
+
     def _set_view_mode_internal(self, mode: ViewMode):
         self.view_mode = mode
 
@@ -248,93 +289,37 @@ class PDFViewer(QWidget):
         if not self.doc: 
             return
         if self.view_mode == mode and not force_setup:
-            return # No change needed unless forced
+            return
         previous_mode = self.view_mode
-        self._set_view_mode_internal(mode) # self.view_mode = mode
+        self._set_view_mode_internal(mode)
 
         if mode == ViewMode.CONTINUOUS_SCROLL:
             self.view_stack.setCurrentWidget(self.continuous_page_container)
             if previous_mode != ViewMode.CONTINUOUS_SCROLL or force_setup:
-                self._setup_continuous_view() # Setup or re-setup if forced or mode changed
-                self.jump_to_page(self.current_page, force_scroll_continuous=True) # Ensure correct scroll position
-        else: # Single, Fit Page, Fit Width, Double Page
-            # Store current scroll position if coming from continuous mode
-            if previous_mode == ViewMode.CONTINUOUS_SCROLL:
-                # Ensure we have a valid current page
-                if not (0 <= self.current_page < self.doc.page_count):
-                    self.current_page = 0
-            
-            # Clear the continuous view first to free memory
+                self._setup_continuous_view()
+        else:
             if previous_mode == ViewMode.CONTINUOUS_SCROLL:
                 self._clear_continuous_view()
-            
-            # Switch to the single canvas
             self.view_stack.setCurrentWidget(self.single_double_canvas)
-            
-            # Clear any existing content from single canvas completely
+            # ... (rest of method is unchanged)
             self.single_double_canvas.clear()
-            self.single_double_canvas.setPixmap(QPixmap())  # Clear any existing pixmap
-            self.single_double_canvas.setText("")  # Clear any text
-            
-            # Reset styling to ensure clean state
+            self.single_double_canvas.setPixmap(QPixmap())
+            self.single_double_canvas.setText("")
             self.single_double_canvas.setStyleSheet("background-color: #e0e0e0;")
-            
-            # Force UI update before rendering
             QApplication.processEvents()
-            
-            # Ensure page number is valid for the new mode
             if mode == ViewMode.DOUBLE_PAGE and self.current_page % 2 != 0 and self.current_page > 0:
-                 self.current_page -= 1 # Ensure left page is shown for double view
-            
-            # Set loading indicator
+                 self.current_page -= 1
             self.single_double_canvas.setText("Loading page...")
             QApplication.processEvents()
-            
-            # Force a complete re-render of the page content with error handling
             try:
-                # Small delay to ensure UI is ready
-                QApplication.processEvents()
-                
-                # First attempt to render
                 self.render_page()
-                
-                # Verify rendering was successful
-                if (self.single_double_canvas.pixmap() is None or 
-                    self.single_double_canvas.pixmap().isNull() or
-                    self.single_double_canvas.text() == "Loading page..."):
-                    
-                    # Second attempt with explicit page load
-                    self.single_double_canvas.clear()
-                    self.single_double_canvas.setText("Rendering...")
-                    QApplication.processEvents()
-                    
-                    # Force render with a small delay
-                    self.render_page()
-                    
-                    # Third attempt if still no content
-                    if (self.single_double_canvas.pixmap() is None or 
-                        self.single_double_canvas.pixmap().isNull()):
-                        
-                        # Direct page rendering as fallback
-                        page = self.doc.load_page(self.current_page)
-                        mat = fitz.Matrix(self.zoom_factor, self.zoom_factor)
-                        pix = page.get_pixmap(matrix=mat, alpha=False)
-                        pixmap = QPixmap()
-                        pixmap.loadFromData(pix.tobytes("ppm"))
-                        self.single_double_canvas.setPixmap(pixmap)
-                        self.single_double_canvas.adjustSize()
-                    
             except Exception as e:
                 print(f"Error rendering page in view mode change: {e}")
                 self.single_double_canvas.setText(f"Error: Could not render page {self.current_page + 1}")
-            
-            # Final cleanup and updates
             self.single_double_canvas.update()
             self.view_stack.update()
             self.scroll_area.update()
             self.update()
-            
-            # Additional processing to ensure UI is fully updated
             QApplication.processEvents()
         
         self.view_mode_changed.emit(self.view_mode)
@@ -342,63 +327,32 @@ class PDFViewer(QWidget):
     def zoom_in(self):
         if not self.doc: return
         
-        if self.view_mode in [ViewMode.FIT_PAGE, ViewMode.FIT_WIDTH] and self.view_mode != ViewMode.CONTINUOUS_SCROLL:
+        if self.view_mode in [ViewMode.FIT_PAGE, ViewMode.FIT_WIDTH]:
             self.zoom_factor = self._last_auto_zoom_level
+        
+        self.zoom_factor *= 1.2
 
         if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
-            self._set_view_mode_internal(ViewMode.CONTINUOUS_SCROLL) # Stay in continuous
-            self.zoom_factor *= 1.2
-            # Instead of re-rendering all pages, just update zoom and clear rendered cache
-            self._continuous_render_zoom = self.zoom_factor
-            self._rendered_pages.clear()
-            
-            # Use template page size for performance optimization
-            template_page_rect = self.doc.load_page(self.current_page).bound()
-            template_width = int(template_page_rect.width * self._continuous_render_zoom)
-            template_height = int(template_page_rect.height * self._continuous_render_zoom)
-            
-            # Update placeholder sizes using template dimensions
-            for i, label in enumerate(self._page_labels_continuous):
-                label.setFixedSize(template_width, template_height)
-                label.clear()  # Clear rendered content
-                label.setText(f"Page {i+1}")
-                label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
-            # Render visible pages
-            self._render_pages_around_current()
+            # Re-setup the virtualized view with the new zoom
+            self._setup_continuous_view()
         else:
             self._set_view_mode_internal(ViewMode.SINGLE_PAGE if self.view_mode != ViewMode.DOUBLE_PAGE else ViewMode.DOUBLE_PAGE)
-            self.zoom_factor *= 1.2
             self.render_page()
         self.view_mode_changed.emit(self.view_mode)
+        
     def zoom_out(self):
         if not self.doc: return
 
-        if self.view_mode in [ViewMode.FIT_PAGE, ViewMode.FIT_WIDTH] and self.view_mode != ViewMode.CONTINUOUS_SCROLL:
+        if self.view_mode in [ViewMode.FIT_PAGE, ViewMode.FIT_WIDTH]:
             self.zoom_factor = self._last_auto_zoom_level
-
+            
+        self.zoom_factor /= 1.2
+        
         if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
-            self._set_view_mode_internal(ViewMode.CONTINUOUS_SCROLL)
-            self.zoom_factor /= 1.2
-            # Same optimization as zoom_in
-            self._continuous_render_zoom = self.zoom_factor
-            self._rendered_pages.clear()
-            
-            # Use template page size for performance optimization
-            template_page_rect = self.doc.load_page(self.current_page).bound()
-            template_width = int(template_page_rect.width * self._continuous_render_zoom)
-            template_height = int(template_page_rect.height * self._continuous_render_zoom)
-            
-            # Update placeholder sizes using template dimensions
-            for i, label in enumerate(self._page_labels_continuous):
-                label.setFixedSize(template_width, template_height)
-                label.clear()  # Clear rendered content
-                label.setText(f"Page {i+1}")
-                label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
-            # Render visible pages
-            self._render_pages_around_current()
+            # Re-setup the virtualized view with the new zoom
+            self._setup_continuous_view()
         else:
             self._set_view_mode_internal(ViewMode.SINGLE_PAGE if self.view_mode != ViewMode.DOUBLE_PAGE else ViewMode.DOUBLE_PAGE)
-            self.zoom_factor /= 1.2
             self.render_page()
         self.view_mode_changed.emit(self.view_mode)
 
@@ -441,19 +395,20 @@ class PDFViewer(QWidget):
 
         self.current_page = page_num
         if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
-            if self._page_labels_continuous and 0 <= page_num < len(self._page_labels_continuous):
-                # Scroll to the top of the page label
-                target_widget = self._page_labels_continuous[page_num]
-                self.scroll_area.ensureWidgetVisible(target_widget, yMargin=0) # Ensure top is visible
-                # ensureWidgetVisible might not always bring it to the very top, 
-                # direct scrollbar manipulation might be needed for precision.
-                # self.scroll_area.verticalScrollBar().setValue(target_widget.y())
+            # Calculate y position of the target page
+            target_y = self.continuous_page_layout.contentsMargins().top()
+            for i in range(page_num):
+                target_y += self._page_geometries[i].height() + self.continuous_page_layout.spacing()
+            
+            self.scroll_area.verticalScrollBar().setValue(int(target_y))
+            QApplication.processEvents() # Ensure scroll happens before update
+            self._update_visible_pages()
             self.current_page_changed_in_continuous_scroll.emit(self.current_page)
-        elif self.view_mode == ViewMode.DOUBLE_PAGE:
-            if self.current_page % 2 != 0: # Ensure we are on the left page of a spread
-                self.current_page = max(0, self.current_page -1)
-            self.render_page()
         else:
+            # ... (rest of method is unchanged)
+            if self.view_mode == ViewMode.DOUBLE_PAGE:
+                if self.current_page % 2 != 0:
+                    self.current_page = max(0, self.current_page - 1)
             self.render_page()
 
     def get_toc(self):
