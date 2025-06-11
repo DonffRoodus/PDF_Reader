@@ -126,8 +126,7 @@ class PDFViewer(QWidget):
             
             self.continuous_page_layout.addWidget(page_label)
             self._page_labels_continuous.append(page_label)
-        
-        # Render the current page and a few around it initially
+          # Render the current page and a few around it initially
         self._render_pages_around_current()
           # Initial scroll to current page if needed
         # self.jump_to_page(self.current_page, force_scroll_continuous=True)
@@ -211,7 +210,7 @@ class PDFViewer(QWidget):
 
     def _set_view_mode_internal(self, mode: ViewMode):
         self.view_mode = mode
-
+        
     def set_view_mode(self, mode: ViewMode, force_setup=False):
         if not self.doc: 
             return
@@ -227,11 +226,16 @@ class PDFViewer(QWidget):
                 self._setup_continuous_view() # Setup or re-setup if forced or mode changed
                 self.jump_to_page(self.current_page, force_scroll_continuous=True) # Ensure correct scroll position
         else: # Single, Fit Page, Fit Width, Double Page
+            # Clear any existing content from single canvas first
+            self.single_double_canvas.clear()
             self.view_stack.setCurrentWidget(self.single_double_canvas)
             if mode == ViewMode.DOUBLE_PAGE and self.current_page % 2 != 0 and self.current_page > 0:
                  self.current_page -= 1 # Ensure left page is shown for double view
             # Always render the page when switching from continuous to single/double modes
             self.render_page() # Render single/double view
+            # Ensure the scroll area properly updates and refreshes
+            self.scroll_area.update()
+            self.scroll_area.repaint()
         
         self.view_mode_changed.emit(self.view_mode)
 
