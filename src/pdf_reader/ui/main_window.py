@@ -647,11 +647,11 @@ class MainWindow(QMainWindow):
         if not annotations_on_page:
             QMessageBox.information(self, "No Annotations", f"No annotations found on page {current_page + 1}.")
             return
-        
+
         # Confirm deletion
         reply = QMessageBox.question(
-            self, 
-            "Clear Annotations", 
+            self,
+            "Clear Annotations",
             f"Are you sure you want to clear all {len(annotations_on_page)} annotation(s) on page {current_page + 1}?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
@@ -661,8 +661,11 @@ class MainWindow(QMainWindow):
             # Remove annotations on current page
             viewer.annotations = [ann for ann in viewer.annotations if ann.page != current_page]
             
-            # Redraw the page
-            viewer._redraw_page(current_page)
+            # Redraw the page - use new method for better continuous scroll support
+            if viewer.view_mode == ViewMode.CONTINUOUS_SCROLL:
+                viewer._redraw_all_pages()
+            else:
+                viewer._redraw_page(current_page)
             
             QMessageBox.information(self, "Annotations Cleared", f"Cleared {len(annotations_on_page)} annotation(s) from page {current_page + 1}.")
 
@@ -689,8 +692,8 @@ class MainWindow(QMainWindow):
             annotation_count = len(viewer.annotations)
             viewer.annotations.clear()
             
-            # Redraw current page
-            viewer._redraw_page(viewer.current_page)
+            # Redraw all pages to ensure annotations are cleared in continuous scroll mode
+            viewer._redraw_all_pages()
             
             QMessageBox.information(self, "All Annotations Cleared", f"Cleared {annotation_count} annotation(s) from the document.")
 
@@ -1022,64 +1025,3 @@ class MainWindow(QMainWindow):
                 else:
                     viewer.zoom_factor = 1.0
                 viewer._setup_continuous_view()
-
-    def clear_current_page_annotations(self):
-        """Clear all annotations on the current page."""
-        viewer = self.current_viewer()
-        if not viewer or not viewer.doc:
-            return
-            
-        current_page = viewer.current_page
-        
-        # Count annotations on current page
-        annotations_on_page = [ann for ann in viewer.annotations if ann.page == current_page]
-        
-        if not annotations_on_page:
-            QMessageBox.information(self, "No Annotations", f"No annotations found on page {current_page + 1}.")
-            return
-        
-        # Confirm deletion
-        reply = QMessageBox.question(
-            self, 
-            "Clear Annotations", 
-            f"Are you sure you want to clear all {len(annotations_on_page)} annotation(s) on page {current_page + 1}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            # Remove annotations on current page
-            viewer.annotations = [ann for ann in viewer.annotations if ann.page != current_page]
-            
-            # Redraw the page
-            viewer._redraw_page(current_page)
-            
-            QMessageBox.information(self, "Annotations Cleared", f"Cleared {len(annotations_on_page)} annotation(s) from page {current_page + 1}.")
-
-    def clear_all_annotations(self):
-        """Clear all annotations from the entire document."""
-        viewer = self.current_viewer()
-        if not viewer or not viewer.doc:
-            return
-            
-        if not viewer.annotations:
-            QMessageBox.information(self, "No Annotations", "No annotations found in this document.")
-            return
-        
-        # Confirm deletion
-        reply = QMessageBox.question(
-            self, 
-            "Clear All Annotations", 
-            f"Are you sure you want to clear all {len(viewer.annotations)} annotation(s) from this document?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            annotation_count = len(viewer.annotations)
-            viewer.annotations.clear()
-            
-            # Redraw current page
-            viewer._redraw_page(viewer.current_page)
-            
-            QMessageBox.information(self, "All Annotations Cleared", f"Cleared {annotation_count} annotation(s) from the document.")

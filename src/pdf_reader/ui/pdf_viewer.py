@@ -251,7 +251,11 @@ class PDFViewer(QWidget):
         del item
         self.continuous_page_layout.insertWidget(i, page_label)
         self._page_widgets[i] = page_label
-
+        
+        # Set up event filter for annotations and update tracking array
+        page_label.installEventFilter(self)
+        self._page_labels_continuous[i] = page_label
+        
     def _deflate_page(self, i):
         """Replace a real widget with a lightweight spacer to save memory."""
         if not (0 <= i < len(self._page_widgets)) or self._page_widgets[i] is None:
@@ -273,6 +277,9 @@ class PDFViewer(QWidget):
         self.continuous_page_layout.insertItem(i, spacer)
 
         self._page_widgets[i] = None
+        # Also clear from the tracking array
+        if i < len(self._page_labels_continuous):
+            self._page_labels_continuous[i] = None
 
     def _update_current_page_in_scroll_view(self):
         """Update current page based on scroll position in continuous mode."""
@@ -660,6 +667,20 @@ class PDFViewer(QWidget):
             self.jump_to_page(bookmark.page_number)
     
     # Annotation functionality
+    def _redraw_all_pages(self):
+        """Redraw all pages to update annotations across the entire document."""
+        if not self.doc:
+            return
+            
+        if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+            # In continuous scroll, redraw all currently inflated pages
+            for i in range(self.doc.page_count):
+                if i < len(self._page_widgets) and self._page_widgets[i] is not None:
+                    self._render_page_with_annotations(i, False, None)
+        else:
+            # In single/double page mode, just redraw the current view
+            self.render_page_with_annotations()
+
     def _redraw_page(self, page_idx, preview=False, preview_end=None):
         """Redraw a page with annotations."""
         if not self.doc or page_idx < 0 or page_idx >= self.doc.page_count:
@@ -703,6 +724,7 @@ class PDFViewer(QWidget):
         painter.end()
         
         self._page_widgets[page_idx].setPixmap(pixmap)
+        
     def _draw_annotations(self, painter, page_idx, preview, preview_end):
         """Draw all annotations for a specific page."""
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -717,7 +739,8 @@ class PDFViewer(QWidget):
             if ann.page != page_idx:
                 continue
                 
-            # Scale annotation coordinates based on current zoom
+            # Scale annotation coordinates from base PDF coordinates to current zoom
+            # Annotations are stored in base PDF coordinates (zoom=1.0)
             scaled_start = QPoint(
                 int(ann.start.x() * current_zoom),
                 int(ann.start.y() * current_zoom)
@@ -740,28 +763,33 @@ class PDFViewer(QWidget):
                 painter.setPen(QPen(QColor(0, 0, 255)))
                 painter.setFont(QFont("Arial", int(12 * current_zoom)))
                 painter.drawText(scaled_start, ann.text)
-        
-        # Draw preview annotation while dragging
+          # Draw preview annotation while dragging
         if preview and self.is_annotating and self.annotation_start_point and preview_end:
-            # For preview, we use the raw coordinates since they're already in the right scale
+            # For preview, we need to convert preview_end to the current coordinate system
+            # Since preview_end is in widget coordinates, we need to convert it
+            if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+                # In continuous scroll, preview_end is already in the right scale for the current page
+                scaled_preview_start = QPoint(
+                    int(self.annotation_start_point.x() * current_zoom),
+                    int(self.annotation_start_point.y() * current_zoom)
+                )
+                # For preview_end, we assume it's already in screen coordinates for the current zoom
+                scaled_preview_end = preview_end
+            else:
+                # In single page mode, both coordinates use the same scale
+                scaled_preview_start = QPoint(
+                    int(self.annotation_start_point.x() * current_zoom),
+                    int(self.annotation_start_point.y() * current_zoom)
+                )
+                scaled_preview_end = preview_end
+            
             if self.active_annotation_type == AnnotationType.HIGHLIGHT:
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QColor(255, 255, 0, 100))
-                painter.drawRect(QRect(self.annotation_start_point, preview_end))
+                painter.drawRect(QRect(scaled_preview_start, scaled_preview_end))
             elif self.active_annotation_type == AnnotationType.UNDERLINE:
                 painter.setPen(QPen(QColor(255, 0, 0), 2))
-                painter.drawLine(self.annotation_start_point, QPoint(preview_end.x(), self.annotation_start_point.y()))
-
-    def _wrap_inflate_page(self, i):
-        """Wrapper for the original _inflate_page method to add event filters."""
-        # Call the original method if it exists
-        if hasattr(super(), '_inflate_page'):
-            super()._inflate_page(i)
-        
-        # Add event filter to the page widget
-        if 0 <= i < len(self._page_widgets) and self._page_widgets[i]:
-            self._page_labels_continuous[i] = self._page_widgets[i]
-            self._page_widgets[i].installEventFilter(self)
+                painter.drawLine(scaled_preview_start, QPoint(scaled_preview_end.x(), scaled_preview_start.y()))
 
     def _screen_to_normalized_coords(self, screen_point, page_idx):
         """Convert screen coordinates to normalized PDF coordinates (0.0-1.0)."""
@@ -792,15 +820,23 @@ class PDFViewer(QWidget):
         return QPoint(int(screen_x), int(screen_y))
 
     def _get_pdf_position(self, source, widget_pos):
-        """Convert widget position to PDF coordinate system."""
+        """Convert widget position to normalized PDF coordinate system (0-1 scale)."""
         if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
             # For continuous scroll mode
             if source in self._page_widgets:
-                # Direct click on a page widget - position is already correct
-                return widget_pos
+                # Direct click on a page widget - normalize coordinates
+                page_idx = self._page_widgets.index(source)
+                page_rect = self.doc.load_page(page_idx).bound()
+                # Convert from scaled coordinates to normalized (0-1) coordinates
+                norm_x = widget_pos.x() / (page_rect.width * self._continuous_render_zoom)
+                norm_y = widget_pos.y() / (page_rect.height * self._continuous_render_zoom)
+                return QPoint(int(norm_x * page_rect.width), int(norm_y * page_rect.height))
             else:
                 # Click on container - map position relative to current page
-                return widget_pos
+                page_rect = self.doc.load_page(self.current_page).bound()
+                norm_x = widget_pos.x() / (page_rect.width * self._continuous_render_zoom)
+                norm_y = widget_pos.y() / (page_rect.height * self._continuous_render_zoom)
+                return QPoint(int(norm_x * page_rect.width), int(norm_y * page_rect.height))
         else:
             # For single/double page modes
             if source == self.single_double_canvas:
@@ -825,7 +861,12 @@ class PDFViewer(QWidget):
                 adjusted_x = max(0, min(adjusted_x, pixmap_size.width() - 1))
                 adjusted_y = max(0, min(adjusted_y, pixmap_size.height() - 1))
                 
-                return QPoint(adjusted_x, adjusted_y)
+                # Convert from scaled coordinates to base PDF coordinates (zoom=1.0)
+                page_rect = self.doc.load_page(self.current_page).bound()
+                base_x = adjusted_x / self.zoom_factor
+                base_y = adjusted_y / self.zoom_factor
+                
+                return QPoint(int(base_x), int(base_y))
             else:
                 return widget_pos
     
