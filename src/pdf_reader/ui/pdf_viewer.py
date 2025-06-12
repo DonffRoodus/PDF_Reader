@@ -471,7 +471,7 @@ class PDFViewer(QWidget):
             QApplication.processEvents()
             
             try:
-                self.render_page()
+                self.render_page_with_annotations()
             except Exception as e:
                 print(f"Error rendering page in view mode change: {e}")
                 self.single_double_canvas.setText(
@@ -543,7 +543,7 @@ class PDFViewer(QWidget):
                 self.jump_to_page(self.current_page, force_scroll_continuous=True)
                 self.current_page_changed_in_continuous_scroll.emit(self.current_page)
             else:
-                self.render_page()
+                self.render_page_with_annotations()
         elif (
             self.view_mode == ViewMode.DOUBLE_PAGE
             and self.current_page == self.doc.page_count - 2
@@ -551,7 +551,7 @@ class PDFViewer(QWidget):
         ):
             # Special case for double page, if on second to last and total is odd, can go to last single page
             self.current_page += 1
-            self.render_page()
+            self.render_page_with_annotations()
         elif (
             self.view_mode != ViewMode.DOUBLE_PAGE
             and self.current_page < self.doc.page_count - 1
@@ -561,7 +561,7 @@ class PDFViewer(QWidget):
                 self.jump_to_page(self.current_page, force_scroll_continuous=True)
                 self.current_page_changed_in_continuous_scroll.emit(self.current_page)
             else:
-                self.render_page()
+                self.render_page_with_annotations()
 
     def prev_page(self):
         """Navigate to the previous page."""
@@ -575,7 +575,7 @@ class PDFViewer(QWidget):
                 self.jump_to_page(self.current_page, force_scroll_continuous=True)
                 self.current_page_changed_in_continuous_scroll.emit(self.current_page)
             else:
-                self.render_page()
+                self.render_page_with_annotations()
 
     def jump_to_page(self, page_num, force_scroll_continuous=False):
         """Jump to a specific page number."""
@@ -600,7 +600,7 @@ class PDFViewer(QWidget):
             if self.view_mode == ViewMode.DOUBLE_PAGE:
                 if self.current_page % 2 != 0:
                     self.current_page = max(0, self.current_page - 1)
-            self.render_page()
+            self.render_page_with_annotations()
 
     def get_toc(self):
         """Get the table of contents for the PDF."""
