@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPixmap, QPainter, QImage
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
 
-from ..core.models import ViewMode
+from ..core.models import ViewMode, Bookmark
 
 
 class PDFViewer(QWidget):
@@ -16,6 +16,7 @@ class PDFViewer(QWidget):
     
     view_mode_changed = pyqtSignal(ViewMode)
     current_page_changed_in_continuous_scroll = pyqtSignal(int)
+    bookmarks_changed = pyqtSignal()  # Emitted when bookmarks are added/removed
 
     def __init__(self, file_path=None):
         super().__init__()
@@ -30,6 +31,9 @@ class PDFViewer(QWidget):
         self._page_widgets = []  # Will hold widgets or None
         self._page_geometries = []  # Store calculated page sizes
         self._continuous_render_zoom = 1.0
+        
+        # --- Bookmark management ---
+        self._bookmarks = []  # List of Bookmark objects for this document
 
         self._setup_ui()
         
@@ -524,3 +528,61 @@ class PDFViewer(QWidget):
         if not self.doc:
             return []
         return self.doc.get_toc()
+    
+    # Bookmark functionality
+    def add_bookmark(self, title: str = None, page_number: int = None) -> bool:
+        """Add a bookmark for the current or specified page."""
+        if not self.doc or not self.file_path:
+            return False
+            
+        page_num = page_number if page_number is not None else self.current_page
+        
+        # Validate page number
+        if not (0 <= page_num < self.doc.page_count):
+            return False
+            
+        # Generate default title if not provided
+        if not title:
+            title = f"Page {page_num + 1}"
+            
+        # Check if bookmark already exists for this page
+        for bookmark in self._bookmarks:
+            if bookmark.page_number == page_num:
+                return False  # Don't add duplicate bookmark
+                
+        # Create and add bookmark
+        from datetime import datetime
+        bookmark = Bookmark(
+            title=title,
+            page_number=page_num,
+            file_path=self.file_path,
+            created_at=datetime.now().isoformat()
+        )
+        
+        self._bookmarks.append(bookmark)
+        self._bookmarks.sort(key=lambda b: b.page_number)  # Keep sorted by page
+        
+        self.bookmarks_changed.emit()
+        return True
+    
+    def remove_bookmark(self, page_number: int) -> bool:
+        """Remove bookmark for the specified page."""
+        for i, bookmark in enumerate(self._bookmarks):
+            if bookmark.page_number == page_number:
+                del self._bookmarks[i]
+                self.bookmarks_changed.emit()
+                return True
+        return False
+    
+    def get_bookmarks(self) -> list[Bookmark]:
+        """Get all bookmarks for this document."""
+        return self._bookmarks.copy()
+    
+    def has_bookmark(self, page_number: int) -> bool:
+        """Check if a page has a bookmark."""
+        return any(b.page_number == page_number for b in self._bookmarks)
+    
+    def jump_to_bookmark(self, bookmark: Bookmark):
+        """Jump to a specific bookmark."""
+        if bookmark.file_path == self.file_path:
+            self.jump_to_page(bookmark.page_number)

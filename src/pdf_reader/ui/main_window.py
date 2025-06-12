@@ -4,12 +4,12 @@ import os
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QFileDialog,
     QToolBar, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QDockWidget
+    QDockWidget, QInputDialog, QMessageBox, QMenu
 )
 from PyQt6.QtGui import QIcon, QAction, QActionGroup
 from PyQt6.QtCore import Qt
 
-from ..core.models import ViewMode
+from ..core.models import ViewMode, Bookmark
 from .pdf_viewer import PDFViewer
 
 
@@ -93,11 +93,32 @@ class MainWindow(QMainWindow):
 
         self.single_page_action.setChecked(True)  # Default
 
+        # Bookmarks Menu
+        bookmarks_menu = self.menuBar().addMenu("&Bookmarks")
+        
+        self.add_bookmark_action = QAction("Add Bookmark", self)
+        self.add_bookmark_action.setShortcut("Ctrl+B")
+        self.add_bookmark_action.triggered.connect(self.add_bookmark)
+        bookmarks_menu.addAction(self.add_bookmark_action)
+        
+        self.remove_bookmark_action = QAction("Remove Bookmark", self)
+        self.remove_bookmark_action.setShortcut("Ctrl+Shift+B")
+        self.remove_bookmark_action.triggered.connect(self.remove_current_bookmark)
+        bookmarks_menu.addAction(self.remove_bookmark_action)
+
         # Toolbar
         toolbar = QToolBar("Main Toolbar")
         self.addToolBar(toolbar)
 
         toolbar.addAction(open_action)
+        
+        # Add bookmark button to toolbar
+        self.add_bookmark_toolbar_action = QAction(QIcon.fromTheme("bookmark-new"), "Add Bookmark", self)
+        self.add_bookmark_toolbar_action.setToolTip("Add bookmark for current page (Ctrl+B)")
+        self.add_bookmark_toolbar_action.triggered.connect(self.add_bookmark)
+        toolbar.addAction(self.add_bookmark_toolbar_action)
+        
+        toolbar.addSeparator()
 
         self.prev_page_action = QAction(
             QIcon.fromTheme("go-previous"), "Previous Page", self
@@ -139,9 +160,13 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.toc_dock)
         self.toc_dock.setVisible(False)
 
-        # Bookmarks Dock (Placeholder)
+        # Bookmarks Dock
         self.bookmarks_dock = QDockWidget("Bookmarks", self)
         self.bookmarks_list_widget = QListWidget()
+        self.bookmarks_list_widget.itemClicked.connect(self.bookmark_navigate)
+        self.bookmarks_list_widget.itemDoubleClicked.connect(self.bookmark_navigate)
+        self.bookmarks_list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.bookmarks_list_widget.customContextMenuRequested.connect(self.show_bookmark_context_menu)
         self.bookmarks_dock.setWidget(self.bookmarks_list_widget)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.bookmarks_dock)
         self.bookmarks_dock.setVisible(False)
@@ -183,6 +208,7 @@ class MainWindow(QMainWindow):
         viewer.current_page_changed_in_continuous_scroll.connect(
             self.update_page_info_from_signal
         )
+        viewer.bookmarks_changed.connect(self.update_bookmarks)
 
         tab_index = self.tab_widget.addTab(viewer, os.path.basename(file_path))
         self.tab_widget.setCurrentIndex(tab_index)
@@ -197,6 +223,7 @@ class MainWindow(QMainWindow):
             self.total_pages_label.setText("/ N/A")
             self.page_num_input.clear()
             self.toc_list_widget.clear()
+            self.bookmarks_list_widget.clear()
 
     def current_viewer(self) -> PDFViewer | None:
         """Get the currently active PDF viewer."""
@@ -280,6 +307,86 @@ class MainWindow(QMainWindow):
             page_num = item.data(Qt.ItemDataRole.UserRole)
             viewer.jump_to_page(page_num)
             self.update_page_info()
+    def add_bookmark(self):
+        """Add a bookmark for the current page."""
+        viewer = self.current_viewer()
+        if not viewer or not viewer.doc:
+            return
+            
+        # Get bookmark title from user
+        title, ok = QInputDialog.getText(
+            self, 
+            "Add Bookmark", 
+            f"Enter bookmark title for page {viewer.current_page + 1}:",
+            text=f"Page {viewer.current_page + 1}"
+        )
+        
+        if ok and title.strip():
+            if viewer.add_bookmark(title.strip()):
+                QMessageBox.information(self, "Bookmark Added", f"Bookmark '{title}' added successfully!")
+            else:
+                QMessageBox.warning(self, "Bookmark Error", "Could not add bookmark. Page may already be bookmarked.")
+    
+    def remove_current_bookmark(self):
+        """Remove bookmark for the current page."""
+        viewer = self.current_viewer()
+        if not viewer or not viewer.doc:
+            return
+            
+        if viewer.has_bookmark(viewer.current_page):
+            if viewer.remove_bookmark(viewer.current_page):
+                QMessageBox.information(self, "Bookmark Removed", "Bookmark removed successfully!")
+        else:
+            QMessageBox.information(self, "No Bookmark", "Current page does not have a bookmark.")
+    
+    def update_bookmarks(self):
+        """Update the bookmarks display."""
+        self.bookmarks_list_widget.clear()
+        viewer = self.current_viewer()
+        if viewer:
+            bookmarks = viewer.get_bookmarks()
+            for bookmark in bookmarks:
+                item = QListWidgetItem(bookmark.display_title())
+                item.setData(Qt.ItemDataRole.UserRole, bookmark)  # Store the bookmark object
+                self.bookmarks_list_widget.addItem(item)
+    
+    def bookmark_navigate(self, item):
+        """Navigate to a page from the bookmarks panel."""
+        viewer = self.current_viewer()
+        if viewer:
+            bookmark = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(bookmark, Bookmark):
+                viewer.jump_to_bookmark(bookmark)
+                self.update_page_info()
+    
+    def show_bookmark_context_menu(self, position):
+        """Show context menu for bookmarks list."""
+        item = self.bookmarks_list_widget.itemAt(position)
+        if not item:
+            return
+            
+        menu = QMenu(self)
+        
+        # Go to bookmark action
+        goto_action = QAction("Go to Page", self)
+        goto_action.triggered.connect(lambda: self.bookmark_navigate(item))
+        menu.addAction(goto_action)
+        
+        # Remove bookmark action
+        remove_action = QAction("Remove Bookmark", self)
+        remove_action.triggered.connect(lambda: self.remove_bookmark_from_list(item))
+        menu.addAction(remove_action)
+        
+        # Show menu at the cursor position
+        menu.exec(self.bookmarks_list_widget.mapToGlobal(position))
+    
+    def remove_bookmark_from_list(self, item):
+        """Remove a bookmark from the list."""
+        bookmark = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(bookmark, Bookmark):
+            viewer = self.current_viewer()
+            if viewer and viewer.remove_bookmark(bookmark.page_number):
+                QMessageBox.information(self, "Bookmark Removed", f"Bookmark '{bookmark.title}' removed successfully!")
 
     def add_to_recent_files(self, file_path):
         """Add a file to the recent files list."""
@@ -314,12 +421,14 @@ class MainWindow(QMainWindow):
         """Handle tab change events."""
         self.update_page_info()
         self.update_toc()
+        self.update_bookmarks()
         current_viewer = self.current_viewer()
         if current_viewer:
             current_viewer.view_mode_changed.connect(self.update_view_menu_state)
             current_viewer.current_page_changed_in_continuous_scroll.connect(
                 self.update_page_info_from_signal
             )
+            current_viewer.bookmarks_changed.connect(self.update_bookmarks)
             self.update_view_menu_state(current_viewer.view_mode)
         else:
             self.update_view_menu_state()
@@ -360,6 +469,11 @@ class MainWindow(QMainWindow):
             self.continuous_scroll_action,
         ]:
             act.setEnabled(True if viewer and viewer.doc else False)
+        
+        # Enable/disable bookmark actions based on document availability
+        self.add_bookmark_action.setEnabled(True if viewer and viewer.doc else False)
+        self.add_bookmark_toolbar_action.setEnabled(True if viewer and viewer.doc else False)
+        self.remove_bookmark_action.setEnabled(True if viewer and viewer.doc else False)
 
         if not (viewer and viewer.doc):  # If no doc, set default and return
             self.single_page_action.setChecked(True)

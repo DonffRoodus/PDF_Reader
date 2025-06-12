@@ -14,7 +14,7 @@ A modern, feature-rich PDF reader application built with PyQt6 and PyMuPDF. This
 - **User Interface:**
   - Tabbed interface for multiple documents
   - Table of Contents navigation
-  - Bookmarks support (planned)
+  - Full bookmark functionality with custom titles
   - Clean, modern UI with customizable themes
 
 - **Performance:**
@@ -118,13 +118,20 @@ PDF_Reader/
    - Next/Previous page buttons
    - Page number input
    - Table of Contents panel
+   - Bookmark navigation
 
-3. **View Modes:**
+3. **Bookmarks:**
+   - Add bookmarks: Ctrl+B or toolbar button
+   - Custom bookmark titles
+   - Bookmarks panel for quick navigation
+   - Right-click context menu for bookmark management
+
+4. **View Modes:**
    - View Modes menu
    - Toolbar buttons
    - Keyboard shortcuts
 
-4. **Zooming:**
+5. **Zooming:**
    - Zoom In/Out buttons
    - Fit to Page/Width modes
    - Mouse wheel (planned)
@@ -135,6 +142,8 @@ PDF_Reader/
 - `Ctrl+W`: Close tab
 - `Page Up/Down`: Navigate pages
 - `Ctrl++/-`: Zoom in/out
+- `Ctrl+B`: Add bookmark
+- `Ctrl+Shift+B`: Remove bookmark from current page
 - `F11`: Toggle fullscreen (planned)
 
 ## Configuration
