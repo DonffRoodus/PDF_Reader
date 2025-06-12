@@ -15,6 +15,7 @@ A modern, feature-rich PDF reader application built with PyQt6 and PyMuPDF. This
   - Tabbed interface for multiple documents
   - Table of Contents navigation
   - Full bookmark functionality with custom titles
+  - Annotation support (highlight, underline, text notes)
   - Clean, modern UI with customizable themes
 
 - **Performance:**
@@ -239,7 +240,8 @@ For detailed architecture information, see [docs/architecture.md](docs/architect
 ## Roadmap
 
 - [ ] Search functionality
-- [ ] Annotation support
+- [x] Annotation support (highlight, underline, text notes)
+- [ ] Annotation persistence across sessions
 - [ ] Print support
 - [ ] Export to other formats
 - [ ] Plugin system

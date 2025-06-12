@@ -3,12 +3,12 @@
 import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QScrollArea, QLabel, QStackedWidget,
-    QSpacerItem, QSizePolicy, QApplication
+    QSpacerItem, QSizePolicy, QApplication, QInputDialog
 )
-from PyQt6.QtGui import QPixmap, QPainter, QImage
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtGui import QPixmap, QPainter, QImage, QPen, QColor, QFont
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPoint, QRect
 
-from ..core.models import ViewMode, Bookmark
+from ..core.models import ViewMode, Bookmark, AnnotationType, Annotation
 
 
 class PDFViewer(QWidget):
@@ -17,7 +17,6 @@ class PDFViewer(QWidget):
     view_mode_changed = pyqtSignal(ViewMode)
     current_page_changed_in_continuous_scroll = pyqtSignal(int)
     bookmarks_changed = pyqtSignal()  # Emitted when bookmarks are added/removed
-
     def __init__(self, file_path=None):
         super().__init__()
         self.doc = None
@@ -34,6 +33,14 @@ class PDFViewer(QWidget):
         
         # --- Bookmark management ---
         self._bookmarks = []  # List of Bookmark objects for this document
+        
+        # --- Annotation management ---
+        self.active_annotation_type = None
+        self.annotation_start_point = None
+        self.annotations = []
+        self.is_annotating = False
+        self._current_annotation_page = 0
+        self._page_labels_continuous = [None] * (self.doc.page_count if self.doc else 0)
 
         self._setup_ui()
         
@@ -72,7 +79,7 @@ class PDFViewer(QWidget):
         self.view_stack.addWidget(self.continuous_page_container)
         self.scroll_area.setWidget(self.view_stack)
         self.layout.addWidget(self.scroll_area)
-
+        
         # Connect scroll events
         self.scroll_area.verticalScrollBar().valueChanged.connect(
             self._update_visible_pages
@@ -80,9 +87,60 @@ class PDFViewer(QWidget):
         self.scroll_area.viewport().installEventFilter(self)
 
     def eventFilter(self, source, event):
-        """Handle viewport resize events."""
+        """Handle viewport resize events and annotation interactions."""
+        # Handle resize events
         if source == self.scroll_area.viewport() and event.type() == event.Type.Resize:
             self._update_visible_pages()
+            return super().eventFilter(source, event)
+        
+        # Handle annotation events
+        if not self.doc:
+            return super().eventFilter(source, event)
+            
+        if event.type() == event.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton and self.active_annotation_type and not self.is_annotating:
+                self.is_annotating = True
+                # Get the correct position on the PDF page
+                self.annotation_start_point = self._get_pdf_position(source, event.pos())
+                if source != self.single_double_canvas and source != self.continuous_page_container:
+                    page_idx = self._page_labels_continuous.index(source) if source in self._page_labels_continuous else self.current_page
+                    self._current_annotation_page = page_idx
+                else:
+                    self._current_annotation_page = self.current_page
+                return True
+            elif event.button() == Qt.MouseButton.RightButton:
+                # Handle right-click for annotation deletion
+                self._handle_annotation_right_click(source, event.pos())
+                return True
+        elif event.type() == event.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton and self.is_annotating:
+            # Get the correct end position using the same coordinate mapping
+            end_point = self._get_pdf_position(source, event.pos())
+            
+            if self.active_annotation_type == AnnotationType.TEXT:
+                text, ok = QInputDialog.getText(self, "Text Annotation", "Enter annotation text:")
+                if ok and text:
+                    self.annotations.append(Annotation(
+                        AnnotationType.TEXT,
+                        self._current_annotation_page,
+                        self.annotation_start_point,
+                        text=text
+                    ))
+            else:
+                self.annotations.append(Annotation(
+                    self.active_annotation_type,
+                    self._current_annotation_page,
+                    self.annotation_start_point,
+                    end_point
+                ))
+            
+            self.is_annotating = False
+            self.annotation_start_point = None
+            self._redraw_page(self._current_annotation_page)
+            return True
+            
+        elif event.type() == event.Type.MouseMove and self.is_annotating and self.active_annotation_type != AnnotationType.TEXT:
+            self._redraw_page(self._current_annotation_page, preview=True, preview_end=event.pos())
+            return True
         return super().eventFilter(source, event)
 
     def load_pdf(self, file_path):
@@ -90,11 +148,19 @@ class PDFViewer(QWidget):
         self.file_path = file_path
         try:
             self.doc = fitz.open(file_path)
+            self._page_labels_continuous = [None] * self.doc.page_count
+            self._setup_annotation_event_filters()
             self.set_view_mode(ViewMode.SINGLE_PAGE, force_setup=True)
         except Exception as e:
             print(f"Error opening PDF {file_path}: {e}")
             self.single_double_canvas.setText("Could not load PDF.")
             self.view_stack.setCurrentWidget(self.single_double_canvas)
+    
+    def _setup_annotation_event_filters(self):
+        """Set up event filters for annotation handling."""
+        if self.doc:
+            self.single_double_canvas.installEventFilter(self)
+            self.continuous_page_container.installEventFilter(self)
 
     def _clear_continuous_view(self):
         """Clear all widgets from continuous view layout."""
@@ -586,3 +652,191 @@ class PDFViewer(QWidget):
         """Jump to a specific bookmark."""
         if bookmark.file_path == self.file_path:
             self.jump_to_page(bookmark.page_number)
+    
+    # Annotation functionality
+    def _redraw_page(self, page_idx, preview=False, preview_end=None):
+        """Redraw a page with annotations."""
+        if not self.doc or page_idx < 0 or page_idx >= self.doc.page_count:
+            return
+            
+        if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+            if page_idx < len(self._page_widgets) and self._page_widgets[page_idx]:
+                self._render_page_with_annotations(page_idx, preview, preview_end)
+        else:
+            self.render_page_with_annotations(preview, preview_end)
+    
+    def render_page_with_annotations(self, preview=False, preview_end=None):
+        """Render the current page with annotations for single/double page modes."""
+        self.render_page()  # Call the original render_page method
+        pixmap = self.single_double_canvas.pixmap()
+        if not pixmap or pixmap.isNull():
+            return
+            
+        painter = QPainter(pixmap)
+        self._draw_annotations(painter, self.current_page, preview, preview_end)
+        if self.view_mode == ViewMode.DOUBLE_PAGE and self.current_page + 1 < self.doc.page_count:
+            offset_x = int(self.doc.load_page(self.current_page).bound().width * self.zoom_factor)
+            painter.translate(offset_x, 0)
+            self._draw_annotations(painter, self.current_page + 1, preview, preview_end)
+        painter.end()
+        self.single_double_canvas.setPixmap(pixmap)
+    
+    def _render_page_with_annotations(self, page_idx, preview=False, preview_end=None):
+        """Render a specific page with annotations for continuous scroll mode."""
+        if page_idx >= len(self._page_widgets) or not self._page_widgets[page_idx]:
+            return
+            
+        page = self.doc.load_page(page_idx)
+        mat = fitz.Matrix(self._continuous_render_zoom, self._continuous_render_zoom)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(img)
+        
+        painter = QPainter(pixmap)
+        self._draw_annotations(painter, page_idx, preview, preview_end)
+        painter.end()
+        
+        self._page_widgets[page_idx].setPixmap(pixmap)
+    
+    def _draw_annotations(self, painter, page_idx, preview, preview_end):
+        """Draw all annotations for a specific page."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        for ann in self.annotations:
+            if ann.page != page_idx:
+                continue
+                
+            if ann.type == AnnotationType.HIGHLIGHT:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(255, 255, 0, 100))
+                painter.drawRect(QRect(ann.start, ann.end))
+                
+            elif ann.type == AnnotationType.UNDERLINE:
+                painter.setPen(QPen(QColor(255, 0, 0), 2))
+                painter.drawLine(ann.start, QPoint(ann.end.x(), ann.start.y()))
+                
+            elif ann.type == AnnotationType.TEXT:
+                painter.setPen(QPen(QColor(0, 0, 255)))
+                painter.setFont(QFont("Arial", 12))
+                painter.drawText(ann.start, ann.text)
+        
+        # Draw preview annotation while dragging
+        if preview and self.is_annotating and self.annotation_start_point and preview_end:
+            if self.active_annotation_type == AnnotationType.HIGHLIGHT:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(255, 255, 0, 100))
+                painter.drawRect(QRect(self.annotation_start_point, preview_end))
+                
+            elif self.active_annotation_type == AnnotationType.UNDERLINE:
+                painter.setPen(QPen(QColor(255, 0, 0), 2))
+                painter.drawLine(self.annotation_start_point, QPoint(preview_end.x(), self.annotation_start_point.y()))
+    def _wrap_inflate_page(self, i):
+        """Wrapper for the original _inflate_page method to add event filters."""
+        # Call the original method if it exists
+        if hasattr(super(), '_inflate_page'):
+            super()._inflate_page(i)
+        
+        # Add event filter to the page widget
+        if 0 <= i < len(self._page_widgets) and self._page_widgets[i]:
+            self._page_labels_continuous[i] = self._page_widgets[i]
+            self._page_widgets[i].installEventFilter(self)
+    def _get_pdf_position(self, source, widget_pos):
+        """Convert widget position to PDF coordinate system."""
+        if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+            # For continuous scroll mode
+            if source in self._page_widgets:
+                # Direct click on a page widget - position is already correct
+                return widget_pos
+            else:
+                # Click on container - map position relative to current page
+                # For now, just return the position as-is since we handle page detection separately
+                return widget_pos
+        else:
+            # For single/double page modes
+            if source == self.single_double_canvas:
+                # The position is already in the correct coordinate system for the canvas
+                # No need to add scroll offsets since annotations are drawn on the pixmap
+                return widget_pos
+            else:
+                return widget_pos
+    
+    def _handle_annotation_right_click(self, source, pos):
+        """Handle right-click for annotation deletion."""
+        from PyQt6.QtWidgets import QMenu
+        
+        # Find annotations at this position
+        page_idx = self.current_page
+        if self.view_mode == ViewMode.CONTINUOUS_SCROLL and source in self._page_widgets:
+            try:
+                page_idx = self._page_widgets.index(source)
+            except ValueError:
+                page_idx = self.current_page
+        
+        # Find annotations near the click position (within 20 pixels)
+        clicked_annotations = []
+        for i, ann in enumerate(self.annotations):
+            if ann.page == page_idx:
+                # Check if click is within annotation bounds
+                if self._is_point_in_annotation(pos, ann):
+                    clicked_annotations.append((i, ann))
+        
+        if clicked_annotations:
+            # Show context menu for annotation deletion
+            menu = QMenu(self)
+            
+            if len(clicked_annotations) == 1:
+                i, ann = clicked_annotations[0]
+                action = menu.addAction(f"Delete {ann.type.name.lower()} annotation")
+                action.triggered.connect(lambda: self._delete_annotation(i))
+            else:
+                # Multiple annotations at this position
+                for i, ann in clicked_annotations:
+                    action = menu.addAction(f"Delete {ann.type.name.lower()} annotation")
+                    action.triggered.connect(lambda checked, idx=i: self._delete_annotation(idx))
+                
+                menu.addSeparator()
+                delete_all_action = menu.addAction("Delete all annotations here")
+                delete_all_action.triggered.connect(lambda: self._delete_multiple_annotations([i for i, _ in clicked_annotations]))
+            
+            # Show the menu at the cursor position
+            global_pos = source.mapToGlobal(pos)
+            menu.exec(global_pos)
+    
+    def _is_point_in_annotation(self, point, annotation):
+        """Check if a point is within an annotation's bounds."""
+        tolerance = 20  # pixels
+        
+        if annotation.type == AnnotationType.TEXT:
+            # For text annotations, check if point is near the text position
+            distance = ((point.x() - annotation.start.x()) ** 2 + 
+                       (point.y() - annotation.start.y()) ** 2) ** 0.5
+            return distance <= tolerance
+        else:
+            # For highlight and underline, check if point is within rectangle
+            rect = QRect(annotation.start, annotation.end).normalized()
+            expanded_rect = rect.adjusted(-tolerance, -tolerance, tolerance, tolerance)
+            return expanded_rect.contains(point)
+    
+    def _delete_annotation(self, annotation_index):
+        """Delete a specific annotation by index."""
+        if 0 <= annotation_index < len(self.annotations):
+            deleted_ann = self.annotations.pop(annotation_index)
+            self._redraw_page(deleted_ann.page)
+            print(f"Deleted {deleted_ann.type.name.lower()} annotation on page {deleted_ann.page + 1}")
+    
+    def _delete_multiple_annotations(self, annotation_indices):
+        """Delete multiple annotations by their indices."""
+        # Sort indices in reverse order to avoid index shifting issues
+        for idx in sorted(annotation_indices, reverse=True):
+            if 0 <= idx < len(self.annotations):
+                deleted_ann = self.annotations.pop(idx)
+                print(f"Deleted {deleted_ann.type.name.lower()} annotation on page {deleted_ann.page + 1}")
+        
+        # Redraw the affected page(s)
+        affected_pages = set()
+        for idx in annotation_indices:
+            if idx < len(self.annotations):
+                affected_pages.add(self.annotations[idx].page)
+        
+        for page_idx in affected_pages:
+            self._redraw_page(page_idx)
