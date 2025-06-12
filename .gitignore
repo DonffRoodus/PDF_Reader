@@ -192,3 +192,20 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# PDF Reader specific
+config.ini
+settings.json
+*.log
+recent_files.txt
+bookmarks.json
+*.backup
+
+# Test PDFs (don't commit large test files)
+test_pdfs/
+sample_files/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/

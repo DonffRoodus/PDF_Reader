@@ -2,5 +2,10 @@
 PyQt6>=6.4.0
 PyMuPDF>=1.23.0
 
+# Development and testing dependencies
+pytest>=6.0.0
+pytest-cov>=2.0.0
+pytest-qt>=4.0.0
+
 # Optional dependencies for enhanced functionality
 # Pillow>=9.0.0  # For additional image format support if needed

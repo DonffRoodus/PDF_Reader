@@ -1,3 +1,31 @@
+#!/usr/bin/env python3
+"""
+DEPRECATED: Legacy single-file PDF Reader
+
+This file contains the original single-file implementation of the PDF Reader.
+For the improved modular structure, please use app.py instead.
+
+Run: python app.py
+"""
+
+import sys
+import warnings
+
+# Show deprecation warning
+warnings.warn(
+    "main.py is deprecated. Please use 'python app.py' for the improved modular version.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
+print("=" * 60)
+print("DEPRECATED: This is the legacy single-file version")
+print("For the improved modular structure, please run:")
+print("  python app.py")
+print("=" * 60)
+print()
+
+# Original imports and code below this line
 import sys
 from enum import Enum
 from PyQt6.QtWidgets import (
