@@ -198,11 +198,19 @@ class MainWindow(QMainWindow):
         toggle_bookmarks_action.triggered.connect(self.bookmarks_dock.setVisible)
         self.bookmarks_dock.visibilityChanged.connect(toggle_bookmarks_action.setChecked)
         panels_menu.addAction(toggle_bookmarks_action)
-    
     def create_annotation_toolbar(self):
         """Create the annotation toolbar."""
         annotation_toolbar = self.addToolBar("Annotation Toolbar")
         annotation_toolbar.setObjectName("AnnotationToolbar")
+        
+        # Add annotation mode toggle
+        annotation_mode_action = QAction(QIcon.fromTheme("edit-entry"), "Annotation Mode", self)
+        annotation_mode_action.setCheckable(True)
+        annotation_mode_action.setToolTip("Enable/Disable annotation mode")
+        annotation_mode_action.triggered.connect(self.toggle_annotation_mode)
+        annotation_toolbar.addAction(annotation_mode_action)
+        
+        annotation_toolbar.addSeparator()
         
         highlight_action = QAction(QIcon.fromTheme("marker"), "Highlight", self)
         highlight_action.setCheckable(True)
@@ -229,7 +237,34 @@ class MainWindow(QMainWindow):
         clear_annotations_action.triggered.connect(self.clear_current_page_annotations)
         annotation_toolbar.addAction(clear_annotations_action)
         
+        self.annotation_mode_action = annotation_mode_action
         self.annotation_actions = [highlight_action, underline_action, text_action]
+
+    def _update_annotation_ui_state(self, enabled: bool):
+        """Update the UI state of annotation-related actions."""
+        for action in self.annotation_actions:
+            action.setEnabled(enabled)
+
+        if enabled:
+            self.annotation_mode_action.setToolTip("Disable annotation mode")
+            # Optionally, change the button style when active
+            # self.annotation_mode_action.setIcon(QIcon.fromTheme("edit-select")) # Example icon change
+            # Or change stylesheet for the button if you have specific styles
+            # self.annotation_mode_action.parentWidget().setStyleSheet(
+            #     "QToolButton:checked { background-color: lightblue; }" \n
+            # ) # This would require the toolbar to be the parent
+        else:
+            self.annotation_mode_action.setToolTip("Enable annotation mode")
+            # Revert to default icon/style if changed
+            # self.annotation_mode_action.setIcon(QIcon.fromTheme("edit-entry"))
+            # self.annotation_mode_action.parentWidget().setStyleSheet("") # Clear specific styles
+
+            # Also, uncheck any active annotation type tool if mode is disabled
+            viewer = self.current_viewer()
+            if viewer:
+                viewer.active_annotation_type = None
+            for tool_action in self.annotation_actions:
+                tool_action.setChecked(False)
 
     def toggle_annotation(self, ann_type):
         """Toggle annotation mode for the specified type."""
@@ -247,6 +282,27 @@ class MainWindow(QMainWindow):
             viewer.active_annotation_type = ann_type
             for action in self.annotation_actions:
                 action.setChecked(action.text().lower() == ann_type.name.lower())
+    
+    def toggle_annotation_mode(self):
+        """Toggle annotation mode for the current viewer."""
+        viewer = self.current_viewer()
+        if not viewer or not viewer.doc:
+            self.annotation_mode_action.setChecked(False)
+            self._update_annotation_ui_state(False)
+            return
+            
+        # Toggle the annotation mode
+        mode_enabled = viewer.toggle_annotation_mode()
+        self.annotation_mode_action.setChecked(mode_enabled)
+        
+        # Update UI state based on annotation mode
+        self._update_annotation_ui_state(mode_enabled)
+        
+        # If annotation mode is disabled, also disable any selected annotation type
+        if not mode_enabled:
+            viewer.active_annotation_type = None
+            for action in self.annotation_actions:
+                action.setChecked(False)
 
     def change_view_mode(self, mode: ViewMode):
         """Change the view mode of the current PDF viewer."""

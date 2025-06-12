@@ -33,12 +33,12 @@ class PDFViewer(QWidget):
         
         # --- Bookmark management ---
         self._bookmarks = []  # List of Bookmark objects for this document
-        
-        # --- Annotation management ---
+          # --- Annotation management ---
         self.active_annotation_type = None
         self.annotation_start_point = None
         self.annotations = []
         self.is_annotating = False
+        self.annotation_mode_enabled = False  # New: require explicit mode activation
         self._current_annotation_page = 0
         self._page_labels_continuous = [None] * (self.doc.page_count if self.doc else 0)
 
@@ -92,13 +92,12 @@ class PDFViewer(QWidget):
         if source == self.scroll_area.viewport() and event.type() == event.Type.Resize:
             self._update_visible_pages()
             return super().eventFilter(source, event)
-        
-        # Handle annotation events
+          # Handle annotation events
         if not self.doc:
             return super().eventFilter(source, event)
             
         if event.type() == event.Type.MouseButtonPress:
-            if event.button() == Qt.MouseButton.LeftButton and self.active_annotation_type and not self.is_annotating:
+            if event.button() == Qt.MouseButton.LeftButton and self.active_annotation_type and self.annotation_mode_enabled and not self.is_annotating:
                 self.is_annotating = True
                 # Get the correct position on the PDF page
                 self.annotation_start_point = self._get_pdf_position(source, event.pos())
@@ -230,8 +229,8 @@ class PDFViewer(QWidget):
         page_label = QLabel()
         page_label.setFixedSize(size)
         page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # Render the pixmap
+        
+        # Render the pixmap with annotations
         page = self.doc.load_page(i)
         mat = fitz.Matrix(self._continuous_render_zoom, self._continuous_render_zoom)
         pix = page.get_pixmap(matrix=mat, alpha=False)
@@ -239,6 +238,12 @@ class PDFViewer(QWidget):
             pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888
         )
         pixmap = QPixmap.fromImage(img)
+        
+        # Draw annotations on the pixmap
+        painter = QPainter(pixmap)
+        self._draw_annotations(painter, i, False, None)
+        painter.end()
+        
         page_label.setPixmap(pixmap)
 
         # Replace the spacer item with our new widget
@@ -473,7 +478,6 @@ class PDFViewer(QWidget):
             QApplication.processEvents()
 
         self.view_mode_changed.emit(self.view_mode)
-
     def zoom_in(self):
         """Zoom in on the PDF."""
         if not self.doc:
@@ -493,7 +497,8 @@ class PDFViewer(QWidget):
                 if self.view_mode != ViewMode.DOUBLE_PAGE
                 else ViewMode.DOUBLE_PAGE
             )
-            self.render_page()
+            # Use annotation-aware rendering
+            self.render_page_with_annotations()
         self.view_mode_changed.emit(self.view_mode)
 
     def zoom_out(self):
@@ -515,7 +520,8 @@ class PDFViewer(QWidget):
                 if self.view_mode != ViewMode.DOUBLE_PAGE
                 else ViewMode.DOUBLE_PAGE
             )
-            self.render_page()
+            # Use annotation-aware rendering
+            self.render_page_with_annotations()
         self.view_mode_changed.emit(self.view_mode)
 
     def next_page(self):
@@ -697,39 +703,55 @@ class PDFViewer(QWidget):
         painter.end()
         
         self._page_widgets[page_idx].setPixmap(pixmap)
-    
     def _draw_annotations(self, painter, page_idx, preview, preview_end):
         """Draw all annotations for a specific page."""
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Get the current zoom factor for this context
+        if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+            current_zoom = self._continuous_render_zoom
+        else:
+            current_zoom = self.zoom_factor
         
         for ann in self.annotations:
             if ann.page != page_idx:
                 continue
                 
+            # Scale annotation coordinates based on current zoom
+            scaled_start = QPoint(
+                int(ann.start.x() * current_zoom),
+                int(ann.start.y() * current_zoom)
+            )
+            scaled_end = QPoint(
+                int(ann.end.x() * current_zoom),
+                int(ann.end.y() * current_zoom)
+            )
+                
             if ann.type == AnnotationType.HIGHLIGHT:
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QColor(255, 255, 0, 100))
-                painter.drawRect(QRect(ann.start, ann.end))
+                painter.drawRect(QRect(scaled_start, scaled_end))
                 
             elif ann.type == AnnotationType.UNDERLINE:
                 painter.setPen(QPen(QColor(255, 0, 0), 2))
-                painter.drawLine(ann.start, QPoint(ann.end.x(), ann.start.y()))
+                painter.drawLine(scaled_start, QPoint(scaled_end.x(), scaled_start.y()))
                 
             elif ann.type == AnnotationType.TEXT:
                 painter.setPen(QPen(QColor(0, 0, 255)))
-                painter.setFont(QFont("Arial", 12))
-                painter.drawText(ann.start, ann.text)
+                painter.setFont(QFont("Arial", int(12 * current_zoom)))
+                painter.drawText(scaled_start, ann.text)
         
         # Draw preview annotation while dragging
         if preview and self.is_annotating and self.annotation_start_point and preview_end:
+            # For preview, we use the raw coordinates since they're already in the right scale
             if self.active_annotation_type == AnnotationType.HIGHLIGHT:
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QColor(255, 255, 0, 100))
                 painter.drawRect(QRect(self.annotation_start_point, preview_end))
-                
             elif self.active_annotation_type == AnnotationType.UNDERLINE:
                 painter.setPen(QPen(QColor(255, 0, 0), 2))
                 painter.drawLine(self.annotation_start_point, QPoint(preview_end.x(), self.annotation_start_point.y()))
+
     def _wrap_inflate_page(self, i):
         """Wrapper for the original _inflate_page method to add event filters."""
         # Call the original method if it exists
@@ -740,6 +762,35 @@ class PDFViewer(QWidget):
         if 0 <= i < len(self._page_widgets) and self._page_widgets[i]:
             self._page_labels_continuous[i] = self._page_widgets[i]
             self._page_widgets[i].installEventFilter(self)
+
+    def _screen_to_normalized_coords(self, screen_point, page_idx):
+        """Convert screen coordinates to normalized PDF coordinates (0.0-1.0)."""
+        if not self.doc:
+            return screen_point
+            
+        # Get the current zoom factor
+        if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+            current_zoom = self._continuous_render_zoom
+        else:
+            current_zoom = self.zoom_factor
+            
+        # Convert screen coordinates back to base PDF coordinates (zoom=1.0)
+        base_x = screen_point.x() / current_zoom
+        base_y = screen_point.y() / current_zoom
+        
+        return QPoint(int(base_x), int(base_y))
+    
+    def _normalized_to_screen_coords(self, norm_point, page_idx, target_zoom):
+        """Convert normalized PDF coordinates to screen coordinates at target zoom."""
+        if not self.doc:
+            return norm_point
+            
+        # Scale the normalized coordinates by the target zoom
+        screen_x = norm_point.x() * target_zoom
+        screen_y = norm_point.y() * target_zoom
+        
+        return QPoint(int(screen_x), int(screen_y))
+
     def _get_pdf_position(self, source, widget_pos):
         """Convert widget position to PDF coordinate system."""
         if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
@@ -749,14 +800,32 @@ class PDFViewer(QWidget):
                 return widget_pos
             else:
                 # Click on container - map position relative to current page
-                # For now, just return the position as-is since we handle page detection separately
                 return widget_pos
         else:
             # For single/double page modes
             if source == self.single_double_canvas:
-                # The position is already in the correct coordinate system for the canvas
-                # No need to add scroll offsets since annotations are drawn on the pixmap
-                return widget_pos
+                # The canvas is centered, so we need to map from widget coords to pixmap coords
+                pixmap = self.single_double_canvas.pixmap()
+                if not pixmap or pixmap.isNull():
+                    return widget_pos
+                
+                # Get the widget size and pixmap size
+                widget_rect = self.single_double_canvas.rect()
+                pixmap_size = pixmap.size()
+                
+                # Calculate the offset due to centering
+                x_offset = (widget_rect.width() - pixmap_size.width()) // 2
+                y_offset = (widget_rect.height() - pixmap_size.height()) // 2
+                
+                # Adjust the position by removing the centering offset
+                adjusted_x = widget_pos.x() - x_offset
+                adjusted_y = widget_pos.y() - y_offset
+                
+                # Ensure the position is within the pixmap bounds
+                adjusted_x = max(0, min(adjusted_x, pixmap_size.width() - 1))
+                adjusted_y = max(0, min(adjusted_y, pixmap_size.height() - 1))
+                
+                return QPoint(adjusted_x, adjusted_y)
             else:
                 return widget_pos
     
@@ -840,3 +909,20 @@ class PDFViewer(QWidget):
         
         for page_idx in affected_pages:
             self._redraw_page(page_idx)
+    
+    def set_annotation_mode(self, enabled):
+        """Enable or disable annotation mode."""
+        self.annotation_mode_enabled = enabled
+        if not enabled:
+            # Cancel any ongoing annotation
+            self.is_annotating = False
+            self.annotation_start_point = None
+    
+    def toggle_annotation_mode(self):
+        """Toggle annotation mode on/off."""
+        self.annotation_mode_enabled = not self.annotation_mode_enabled
+        if not self.annotation_mode_enabled:
+            # Cancel any ongoing annotation
+            self.is_annotating = False
+            self.annotation_start_point = None
+        return self.annotation_mode_enabled
