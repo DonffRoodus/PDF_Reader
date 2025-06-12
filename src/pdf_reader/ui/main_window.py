@@ -91,7 +91,8 @@ class MainWindow(QMainWindow):
         view_mode_menu.addAction(self.continuous_scroll_action)
         self.view_mode_group.addAction(self.continuous_scroll_action)
 
-        self.single_page_action.setChecked(True)  # Default        # Bookmarks Menu
+        self.single_page_action.setChecked(True)  # Default
+        # Bookmarks Menu
         bookmarks_menu = self.menuBar().addMenu("&Bookmarks")
         
         self.add_bookmark_action = QAction("Add Bookmark", self)
@@ -116,6 +117,13 @@ class MainWindow(QMainWindow):
         clear_all_annotations_action.setShortcut("Ctrl+Alt+Shift+C")
         clear_all_annotations_action.triggered.connect(self.clear_all_annotations)
         annotations_menu.addAction(clear_all_annotations_action)
+        
+        annotations_menu.addSeparator()
+        
+        # Add help action for individual annotation deletion
+        help_action = QAction("💡 Tip: Right-click annotations to delete individual ones", self)
+        help_action.setEnabled(False)  # Make it non-clickable, just informational
+        annotations_menu.addAction(help_action)
 
         # Toolbar
         toolbar = QToolBar("Main Toolbar")
@@ -213,20 +221,20 @@ class MainWindow(QMainWindow):
         annotation_toolbar.addSeparator()
         
         highlight_action = QAction(QIcon.fromTheme("marker"), "Highlight", self)
-        highlight_action.setCheckable(True)
-        highlight_action.setToolTip("Highlight text")
+        highlight_action.setCheckable(False)
+        highlight_action.setToolTip("Highlight text - Right-click annotations to delete individual ones")
         highlight_action.triggered.connect(lambda: self.toggle_annotation(AnnotationType.HIGHLIGHT))
         annotation_toolbar.addAction(highlight_action)
         
         underline_action = QAction(QIcon.fromTheme("format-text-underline"), "Underline", self)
-        underline_action.setCheckable(True)
-        underline_action.setToolTip("Underline text")
+        underline_action.setCheckable(False)
+        underline_action.setToolTip("Underline text - Right-click annotations to delete individual ones")
         underline_action.triggered.connect(lambda: self.toggle_annotation(AnnotationType.UNDERLINE))
         annotation_toolbar.addAction(underline_action)
         
         text_action = QAction(QIcon.fromTheme("text-field"), "Text", self)
-        text_action.setCheckable(True)
-        text_action.setToolTip("Add text annotation")
+        text_action.setCheckable(False)
+        text_action.setToolTip("Add text annotation - Right-click annotations to delete individual ones")
         text_action.triggered.connect(lambda: self.toggle_annotation(AnnotationType.TEXT))
         annotation_toolbar.addAction(text_action)
         

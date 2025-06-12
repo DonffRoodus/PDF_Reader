@@ -869,7 +869,6 @@ class PDFViewer(QWidget):
                 return QPoint(int(base_x), int(base_y))
             else:
                 return widget_pos
-    
     def _handle_annotation_right_click(self, source, pos):
         """Handle right-click for annotation deletion."""
         from PyQt6.QtWidgets import QMenu
@@ -882,12 +881,15 @@ class PDFViewer(QWidget):
             except ValueError:
                 page_idx = self.current_page
         
+        # Convert click position to PDF coordinates for comparison
+        pdf_pos = self._get_pdf_position(source, pos)
+        
         # Find annotations near the click position (within 20 pixels)
         clicked_annotations = []
         for i, ann in enumerate(self.annotations):
             if ann.page == page_idx:
                 # Check if click is within annotation bounds
-                if self._is_point_in_annotation(pos, ann):
+                if self._is_point_in_annotation(pdf_pos, ann):
                     clicked_annotations.append((i, ann))
         
         if clicked_annotations:
@@ -911,45 +913,81 @@ class PDFViewer(QWidget):
             # Show the menu at the cursor position
             global_pos = source.mapToGlobal(pos)
             menu.exec(global_pos)
-    
     def _is_point_in_annotation(self, point, annotation):
-        """Check if a point is within an annotation's bounds."""
-        tolerance = 20  # pixels
+        """Check if a point is within an annotation's bounds.
+        
+        Args:
+            point: QPoint in PDF coordinates (base PDF coordinates, zoom=1.0)
+            annotation: Annotation object with coordinates in base PDF coordinates
+        """
+        tolerance = 40  # Increased base tolerance for easier clicking
+        
+        # Get current zoom factor for tolerance scaling
+        if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+            current_zoom = self._continuous_render_zoom
+        else:
+            current_zoom = self.zoom_factor
+            
+        # Scale tolerance by current zoom and convert to integer
+        # Ensure minimum tolerance of 15 pixels for very high zoom levels
+        scaled_tolerance = max(15, int(tolerance / current_zoom))
         
         if annotation.type == AnnotationType.TEXT:
-            # For text annotations, check if point is near the text position
+            # For text annotations, use a larger circular area
             distance = ((point.x() - annotation.start.x()) ** 2 + 
                        (point.y() - annotation.start.y()) ** 2) ** 0.5
-            return distance <= tolerance
+            return distance <= scaled_tolerance
         else:
-            # For highlight and underline, check if point is within rectangle
+            # For highlight and underline, create a more generous hit area
             rect = QRect(annotation.start, annotation.end).normalized()
-            expanded_rect = rect.adjusted(-tolerance, -tolerance, tolerance, tolerance)
+            
+            # For underlines, make the hit area taller since underlines are thin
+            if annotation.type == AnnotationType.UNDERLINE:
+                # Make underline hit area at least 20 pixels tall
+                min_height = max(20 / current_zoom, scaled_tolerance)
+                if rect.height() < min_height:
+                    center_y = rect.center().y()
+                    half_height = int(min_height / 2)
+                    rect.setTop(int(center_y - half_height))
+                    rect.setBottom(int(center_y + half_height))
+            
+            # Expand the rectangle by the tolerance
+            expanded_rect = rect.adjusted(-scaled_tolerance, -scaled_tolerance, 
+                                        scaled_tolerance, scaled_tolerance)
             return expanded_rect.contains(point)
-    
     def _delete_annotation(self, annotation_index):
         """Delete a specific annotation by index."""
         if 0 <= annotation_index < len(self.annotations):
             deleted_ann = self.annotations.pop(annotation_index)
-            self._redraw_page(deleted_ann.page)
+            
+            # Use appropriate redraw method based on view mode
+            if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+                self._redraw_all_pages()
+            else:
+                self._redraw_page(deleted_ann.page)
+                
             print(f"Deleted {deleted_ann.type.name.lower()} annotation on page {deleted_ann.page + 1}")
     
     def _delete_multiple_annotations(self, annotation_indices):
         """Delete multiple annotations by their indices."""
+        # Collect affected pages before deletion
+        affected_pages = set()
+        for idx in annotation_indices:
+            if 0 <= idx < len(self.annotations):
+                affected_pages.add(self.annotations[idx].page)
+        
         # Sort indices in reverse order to avoid index shifting issues
         for idx in sorted(annotation_indices, reverse=True):
             if 0 <= idx < len(self.annotations):
                 deleted_ann = self.annotations.pop(idx)
                 print(f"Deleted {deleted_ann.type.name.lower()} annotation on page {deleted_ann.page + 1}")
         
-        # Redraw the affected page(s)
-        affected_pages = set()
-        for idx in annotation_indices:
-            if idx < len(self.annotations):
-                affected_pages.add(self.annotations[idx].page)
-        
-        for page_idx in affected_pages:
-            self._redraw_page(page_idx)
+        # Redraw the affected pages
+        if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+            self._redraw_all_pages()
+        else:
+            for page_idx in affected_pages:
+                self._redraw_page(page_idx)
     
     def set_annotation_mode(self, enabled):
         """Enable or disable annotation mode."""
