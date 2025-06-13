@@ -3,7 +3,8 @@
 import os
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
+from datetime import datetime
 
 # Application information
 APP_NAME = "PDF Reader"
@@ -14,6 +15,7 @@ APP_AUTHOR = "HCI Course Project"
 DEFAULT_ZOOM_FACTOR = 1.0
 ZOOM_STEP = 1.2
 MAX_RECENT_FILES = 10
+MAX_RECENT_DOCUMENTS = 5  # Maximum number of recent documents to track
 
 # Performance settings
 CONTINUOUS_SCROLL_BUFFER_PAGES = 2  # Pages to render around visible area
@@ -62,6 +64,10 @@ class Config:
             "files": {
                 "max_recent": MAX_RECENT_FILES,
                 "recent_files": [],
+            },
+            "document_history": {
+                "documents": {},  # file_path: {"last_page": int, "last_opened": str, "total_pages": int}
+                "recent_documents": []  # List of recently opened documents with reading progress
             }
         }
     
@@ -141,7 +147,75 @@ class Config:
         recent_files = recent_files[:max_recent]
         
         self.set('files.recent_files', recent_files)
-
+    
+    def get_document_history(self) -> Dict[str, Dict]:
+        """Get document reading history."""
+        return self.get('document_history.documents', {})
+    
+    def get_recent_documents(self) -> List[Dict]:
+        """Get list of recently read documents with their reading progress."""
+        return self.get('document_history.recent_documents', [])
+    
+    def update_document_progress(self, file_path: str, current_page: int, total_pages: int):
+        """Update reading progress for a document."""
+        documents = self.get_document_history()
+        timestamp = datetime.now().isoformat()
+        
+        # Update or create document entry
+        documents[file_path] = {
+            "last_page": current_page,
+            "last_opened": timestamp,
+            "total_pages": total_pages
+        }
+        
+        self.set('document_history.documents', documents)
+        
+        # Update recent documents list
+        self._update_recent_documents(file_path, current_page, total_pages, timestamp)
+    
+    def _update_recent_documents(self, file_path: str, current_page: int, total_pages: int, timestamp: str):
+        """Update the recent documents list with current document."""
+        recent_docs = self.get_recent_documents()
+        
+        # Remove existing entry for this document
+        recent_docs = [doc for doc in recent_docs if doc.get('file_path') != file_path]
+        
+        # Create new entry
+        doc_entry = {
+            "file_path": file_path,
+            "filename": os.path.basename(file_path),
+            "last_page": current_page,
+            "total_pages": total_pages,
+            "last_opened": timestamp,
+            "progress_percent": round((current_page / max(total_pages, 1)) * 100, 1)
+        }
+        
+        # Add to beginning of list
+        recent_docs.insert(0, doc_entry)
+        
+        # Keep only the most recent documents
+        recent_docs = recent_docs[:MAX_RECENT_DOCUMENTS]
+        
+        self.set('document_history.recent_documents', recent_docs)
+    
+    def get_last_page(self, file_path: str) -> int:
+        """Get the last read page for a document."""
+        documents = self.get_document_history()
+        return documents.get(file_path, {}).get('last_page', 0)
+    
+    def remove_document_from_history(self, file_path: str):
+        """Remove a document from reading history."""
+        # Remove from documents history
+        documents = self.get_document_history()
+        if file_path in documents:
+            del documents[file_path]
+            self.set('document_history.documents', documents)
+        
+        # Remove from recent documents
+        recent_docs = self.get_recent_documents()
+        recent_docs = [doc for doc in recent_docs if doc.get('file_path') != file_path]
+        self.set('document_history.recent_documents', recent_docs)
+        
 
 # Global configuration instance
 config = Config()

@@ -1,4 +1,3 @@
-
 """Main window and application UI components."""
 
 import os
@@ -8,9 +7,10 @@ from PyQt6.QtWidgets import (
     QDockWidget, QInputDialog, QMessageBox, QMenu
 )
 from PyQt6.QtGui import QIcon, QAction, QActionGroup
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 from ..core.models import ViewMode, Bookmark, AnnotationType, Annotation
+from ..core.config import config
 from .pdf_viewer import PDFViewer
 
 
@@ -29,6 +29,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tab_widget)
 
         self.recent_files = []
+          # Timer for saving reading progress
+        self.progress_save_timer = QTimer()
+        self.progress_save_timer.timeout.connect(self.save_current_progress)
+        self.progress_save_timer.setSingleShot(True)
         
         self.create_menus_and_toolbar()
         self.create_dock_widgets()
@@ -382,10 +386,22 @@ class MainWindow(QMainWindow):
         viewer.current_page_changed_in_continuous_scroll.connect(
             self.update_page_info_from_signal
         )
+        viewer.current_page_changed.connect(
+            lambda: self.schedule_progress_save()
+        )
         viewer.bookmarks_changed.connect(self.update_bookmarks)
 
         tab_index = self.tab_widget.addTab(viewer, os.path.basename(file_path))
         self.tab_widget.setCurrentIndex(tab_index)
+        
+        # Restore last read page if available
+        if viewer.doc:
+            last_page = config.get_last_page(file_path)
+            if last_page > 0 and last_page < viewer.doc.page_count:
+                viewer.jump_to_page(last_page)        # Save document access immediately
+        if viewer.doc:
+            config.update_document_progress(file_path, viewer.current_page, viewer.doc.page_count)
+            config.save()
 
     def close_tab(self, index):
         """Close a tab and clean up resources."""
@@ -557,17 +573,41 @@ class MainWindow(QMainWindow):
 
     def add_to_recent_files(self, file_path):
         """Add a file to the recent files list."""
+        # Update both the local list and config
         if file_path in self.recent_files:
             self.recent_files.remove(file_path)
         self.recent_files.insert(0, file_path)
         self.recent_files = self.recent_files[:10]
+        
+        # Also add to config
+        config.add_recent_file(file_path)
+        config.save()
+        
         self.update_recent_files_menu()
-
     def update_recent_files_menu(self):
-        """Update the recent files menu."""
+        """Update the recent files menu with progress information."""
         self.recent_files_menu.clear()
+        recent_docs = config.get_recent_documents()
+        
         for file_path in self.recent_files:
-            action = QAction(os.path.basename(file_path), self)
+            filename = os.path.basename(file_path)
+            
+            # Try to find progress information
+            doc_info = None
+            for doc in recent_docs:
+                if doc.get('file_path') == file_path:
+                    doc_info = doc
+                    break
+            
+            if doc_info:
+                # Show filename with page information
+                last_page = doc_info.get('last_page', 0) + 1  # Convert to 1-based
+                total_pages = doc_info.get('total_pages', 0)
+                action_text = f"{filename} (Page {last_page}/{total_pages})"
+            else:
+                action_text = filename
+            
+            action = QAction(action_text, self)
             action.setData(file_path)
             action.triggered.connect(self.open_recent_file)
             self.recent_files_menu.addAction(action)
@@ -585,8 +625,24 @@ class MainWindow(QMainWindow):
                 self.update_recent_files_menu()
 
     def load_recent_files(self):
-        """Load recent files (placeholder for persistent storage)."""
-        pass
+        """Load recent files from configuration."""
+        self.recent_files = config.get_recent_files()
+        self.update_recent_files_menu()
+
+    def save_current_progress(self):
+        """Save current reading progress to configuration."""
+        viewer = self.current_viewer()
+        if viewer and viewer.file_path and viewer.doc:
+            current_page = viewer.current_page
+            total_pages = viewer.doc.page_count
+            config.update_document_progress(viewer.file_path, current_page, total_pages)
+            config.save()
+            # Update the recent documents display
+            self.update_recent_documents_dock()
+
+    def schedule_progress_save(self):
+        """Schedule a progress save after a delay to avoid too frequent saves."""
+        self.progress_save_timer.start(2000) # Save after 2 seconds of inactivity
 
     def update_view_menu_state(self):
         """Update the view mode menu based on the current viewer."""
@@ -615,3 +671,30 @@ class MainWindow(QMainWindow):
         self.update_toc()
         self.update_bookmarks()
         self.update_view_menu_state()
+
+    def save_current_progress(self):
+        """Save current reading progress to configuration."""
+        viewer = self.current_viewer()
+        if viewer and viewer.file_path and viewer.doc:
+            current_page = viewer.current_page
+            total_pages = viewer.doc.page_count
+            config.update_document_progress(viewer.file_path, current_page, total_pages)
+            config.save()
+
+    def schedule_progress_save(self):
+        """Schedule a progress save after a delay to avoid too frequent saves."""
+        self.progress_save_timer.start(2000)  # Save after 2 seconds of inactivity
+
+    def closeEvent(self, event):
+        """Handle application close event to save progress."""
+        # Save current progress for all open documents
+        for i in range(self.tab_widget.count()):
+            viewer = self.tab_widget.widget(i)
+            if isinstance(viewer, PDFViewer) and viewer.file_path and viewer.doc:
+                current_page = viewer.current_page
+                total_pages = viewer.doc.page_count
+                config.update_document_progress(viewer.file_path, current_page, total_pages)
+        
+        # Save configuration
+        config.save()
+        event.accept()

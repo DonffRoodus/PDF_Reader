@@ -32,6 +32,7 @@ class PDFViewer(QWidget):
     
     view_mode_changed = pyqtSignal(ViewMode)
     current_page_changed_in_continuous_scroll = pyqtSignal(int)
+    current_page_changed = pyqtSignal(int)  # General page change signal
     bookmarks_changed = pyqtSignal()
     
     def __init__(self, file_path=None):
@@ -521,8 +522,10 @@ class PDFViewer(QWidget):
                 current_y += page_height + self.continuous_page_layout.spacing()
 
             if self.current_page != best_page_idx:
+                old_page = self.current_page
                 self.current_page = best_page_idx
                 self.current_page_changed_in_continuous_scroll.emit(self.current_page)
+                self.current_page_changed.emit(self.current_page)
         except Exception as e:
             print(f"Error updating current page in scroll view: {e}")
 
@@ -760,6 +763,7 @@ class PDFViewer(QWidget):
             return
             
         try:
+            old_page = self.current_page
             page_increment = 2 if self.view_mode == ViewMode.DOUBLE_PAGE else 1
             if self.current_page < self.doc.page_count - page_increment:
                 self.current_page += page_increment
@@ -785,6 +789,11 @@ class PDFViewer(QWidget):
                     self.current_page_changed_in_continuous_scroll.emit(self.current_page)
                 else:
                     self.render_page_with_annotations()
+            
+            # Emit general page change signal if page actually changed
+            if old_page != self.current_page:
+                self.current_page_changed.emit(self.current_page)
+                
         except Exception as e:
             print(f"Error navigating to next page: {e}")
 
@@ -794,6 +803,7 @@ class PDFViewer(QWidget):
             return
             
         try:
+            old_page = self.current_page
             page_decrement = 2 if self.view_mode == ViewMode.DOUBLE_PAGE else 1
             if self.current_page > 0:
                 self.current_page = max(0, self.current_page - page_decrement)
@@ -802,6 +812,11 @@ class PDFViewer(QWidget):
                     self.current_page_changed_in_continuous_scroll.emit(self.current_page)
                 else:
                     self.render_page_with_annotations()
+            
+            # Emit general page change signal if page actually changed
+            if old_page != self.current_page:
+                self.current_page_changed.emit(self.current_page)
+                
         except Exception as e:
             print(f"Error navigating to previous page: {e}")
 
@@ -811,7 +826,9 @@ class PDFViewer(QWidget):
             return
 
         try:
+            old_page = self.current_page
             self.current_page = page_num
+            
             if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
                 target_y = self.continuous_page_layout.contentsMargins().top()
                 for i in range(page_num):
@@ -829,6 +846,11 @@ class PDFViewer(QWidget):
                     if self.current_page % 2 != 0:
                         self.current_page = max(0, self.current_page - 1)
                 self.render_page_with_annotations()
+            
+            # Emit general page change signal if page actually changed
+            if old_page != self.current_page:
+                self.current_page_changed.emit(self.current_page)
+                
         except Exception as e:
             print(f"Error jumping to page {page_num + 1}: {e}")
 
