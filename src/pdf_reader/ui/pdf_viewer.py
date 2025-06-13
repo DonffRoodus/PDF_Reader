@@ -47,6 +47,8 @@ class PDFViewer(QWidget):
         self._page_widgets = []
         self._page_geometries = []
         self._continuous_render_zoom = 1.0
+        self._ignore_scroll_page_updates = False  # Flag to temporarily disable automatic page updates
+        self._debug_mode = False  # Set to False to disable debug prints
         
         self._bookmarks = []
         
@@ -489,12 +491,10 @@ class PDFViewer(QWidget):
             size = self._page_geometries[page_idx]
             spacer = QSpacerItem(
                 size.width(),
-                size.height(),
-                QSizePolicy.Policy.Minimum,
+                size.height(),                QSizePolicy.Policy.Minimum,
                 QSizePolicy.Policy.Fixed,
             )
             self.continuous_page_layout.insertItem(page_idx, spacer)
-
             self._page_widgets[page_idx] = None
             if page_idx < len(self._page_labels_continuous):
                 self._page_labels_continuous[page_idx] = None
@@ -504,6 +504,11 @@ class PDFViewer(QWidget):
     def _update_current_page_in_scroll_view(self):
         """Update current page based on scroll position in continuous mode."""
         if self.view_mode != ViewMode.CONTINUOUS_SCROLL:
+            return
+        
+        # Skip automatic page updates if we just manually jumped to a page
+        if self._ignore_scroll_page_updates:
+            self._debug_print("Skipping automatic page update due to _ignore_scroll_page_updates flag")
             return
 
         try:
@@ -524,6 +529,7 @@ class PDFViewer(QWidget):
             if self.current_page != best_page_idx:
                 old_page = self.current_page
                 self.current_page = best_page_idx
+                self._debug_print(f"Auto page change from {old_page} to {best_page_idx} (scroll position: {self.scroll_area.verticalScrollBar().value()})")
                 self.current_page_changed_in_continuous_scroll.emit(self.current_page)
                 self.current_page_changed.emit(self.current_page)
         except Exception as e:
@@ -535,9 +541,9 @@ class PDFViewer(QWidget):
             return
 
         try:
-            print(f"DEBUG: _setup_continuous_view starting, current_page: {self.current_page}")
+            self._debug_print(f"_setup_continuous_view starting, current_page: {self.current_page}")
             self._clear_continuous_view()
-            print(f"DEBUG: After _clear_continuous_view, current_page: {self.current_page}")
+            self._debug_print(f"After _clear_continuous_view, current_page: {self.current_page}")
             QApplication.processEvents()
             vp_width = self.scroll_area.viewport().width()
             if vp_width > 20:
@@ -562,11 +568,15 @@ class PDFViewer(QWidget):
                 spacer = QSpacerItem(
                     width, height, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed
                 )
-                self.continuous_page_layout.addSpacerItem(spacer)
+                self.continuous_page_layout.addSpacerItem(spacer)            # Process events to ensure layout is updated before jumping to page
+            QApplication.processEvents()
 
-            print(f"DEBUG: Before jump_to_page, current_page: {self.current_page}")
-            self.jump_to_page(self.current_page)
-            print(f"DEBUG: _setup_continuous_view completed, jumped to page: {self.current_page}")
+            # Use a timer to delay the jump until the layout is fully processed
+            from PyQt6.QtCore import QTimer
+            def delayed_jump():
+                self.jump_to_page(self.current_page)
+            
+            QTimer.singleShot(10, delayed_jump)  # Small delay for layout to process
         except Exception as e:
             print(f"Error setting up continuous view: {e}")
 
@@ -676,12 +686,11 @@ class PDFViewer(QWidget):
             previous_mode = self.view_mode
             current_page_backup = self.current_page  # Backup current page
             self._set_view_mode_internal(mode)
-
             if mode == ViewMode.CONTINUOUS_SCROLL:
                 self.view_stack.setCurrentWidget(self.continuous_page_container)
                 if previous_mode != ViewMode.CONTINUOUS_SCROLL or force_setup:
                     self.current_page = current_page_backup  # Restore page before setup
-                    print(f"DEBUG: Setting up continuous view, restored to page: {self.current_page}")
+                    self._debug_print(f"Setting up continuous view, restored to page: {self.current_page}")
                     self._setup_continuous_view()
                 else:
                     # Jump to current page to ensure proper scrolling
@@ -830,11 +839,15 @@ class PDFViewer(QWidget):
                     self.render_page_with_annotations()
             
             # Emit general page change signal if page actually changed
-            if old_page != self.current_page:
-                self.current_page_changed.emit(self.current_page)
+            if old_page != self.current_page:                self.current_page_changed.emit(self.current_page)
                 
         except Exception as e:
             print(f"Error navigating to previous page: {e}")
+
+    def _debug_print(self, message: str):
+        """Print debug message if debug mode is enabled."""
+        if self._debug_mode:
+            print(f"DEBUG: {message}")
 
     def jump_to_page(self, page_num, force_scroll_continuous=True):
         """Jump to a specific page number."""
@@ -844,9 +857,13 @@ class PDFViewer(QWidget):
         try:
             old_page = self.current_page
             self.current_page = page_num
-            print(f"DEBUG: jump_to_page called, from {old_page} to {page_num}, view_mode: {self.view_mode}")
+            self._debug_print(f"jump_to_page called, from {old_page} to {page_num}, view_mode: {self.view_mode}")
             
             if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+                # Set flag to prevent automatic page recalculation after manual jump
+                self._ignore_scroll_page_updates = True
+                self._debug_print("Setting _ignore_scroll_page_updates=True before scroll")
+                
                 target_y = self.continuous_page_layout.contentsMargins().top()
                 for i in range(page_num):
                     target_y += (
@@ -854,10 +871,48 @@ class PDFViewer(QWidget):
                         + self.continuous_page_layout.spacing()
                     )
 
-                self.scroll_area.verticalScrollBar().setValue(int(target_y))
-                QApplication.processEvents()
-                # Don't call _update_visible_pages here as it would reset current_page
-                # Just emit the signal to indicate the page changed
+                self._debug_print(f"Calculated target_y for page {page_num}: {target_y}")
+                self._debug_print(f"Current scroll position: {self.scroll_area.verticalScrollBar().value()}")
+                self._debug_print(f"Scroll maximum: {self.scroll_area.verticalScrollBar().maximum()}")
+                  # Check if scroll area is ready for scrolling
+                scroll_max = self.scroll_area.verticalScrollBar().maximum()
+                if scroll_max > 0:
+                    # Normal case: scroll area is ready
+                    self.scroll_area.verticalScrollBar().setValue(int(target_y))
+                    QApplication.processEvents()
+                    self._debug_print(f"After scroll, position: {self.scroll_area.verticalScrollBar().value()}")
+                else:
+                    # Layout not ready yet - use a multi-retry mechanism
+                    self._debug_print("Scroll area not ready, scheduling retries")
+                    from PyQt6.QtCore import QTimer
+                    retry_count = 0
+                    max_retries = 5
+                    
+                    def retry_scroll():
+                        nonlocal retry_count
+                        retry_count += 1
+                        new_max = self.scroll_area.verticalScrollBar().maximum()
+                        self._debug_print(f"Retry {retry_count} - max: {new_max}, target_y: {target_y}")
+                        if new_max > 0:
+                            self.scroll_area.verticalScrollBar().setValue(int(target_y))
+                            self._debug_print(f"Retry {retry_count} successful, position: {self.scroll_area.verticalScrollBar().value()}")
+                        elif retry_count < max_retries:
+                            # Schedule another retry with increasing delay
+                            QTimer.singleShot(50 * retry_count, retry_scroll)
+                        else:
+                            self._debug_print("All retries failed - scroll area not ready")
+                    
+                    QTimer.singleShot(50, retry_scroll)
+                
+                # Clear the flag after a delay to allow scroll events to settle
+                from PyQt6.QtCore import QTimer
+                def clear_flag():
+                    self._ignore_scroll_page_updates = False
+                    self._debug_print("Cleared _ignore_scroll_page_updates flag")
+                
+                QTimer.singleShot(200, clear_flag)  # Increased delay to account for retry
+                
+                # Emit signals to indicate the page changed
                 self.current_page_changed_in_continuous_scroll.emit(self.current_page)
             else:
                 if self.view_mode == ViewMode.DOUBLE_PAGE:
