@@ -89,7 +89,7 @@ class Config:
                 json.dump(self._config, f, indent=2)
         except IOError as e:
             print(f"Error saving config: {e}")
-    
+
     def _merge_config(self, saved_config: Dict[str, Any]):
         """Merge saved configuration with defaults."""
         def merge_dict(default, saved):
@@ -99,8 +99,15 @@ class Config:
                         merge_dict(default[key], value)
                     else:
                         default[key] = value
+                else:
+                    # Allow new keys to be added to dictionaries (especially for documents)
+                    default[key] = value
         
+        print(f"DEBUG: Merging config. document_history in saved: {'document_history' in saved_config}")
+        if 'document_history' in saved_config:
+            print(f"DEBUG: document_history.documents in saved: {'documents' in saved_config['document_history']}")
         merge_dict(self._config, saved_config)
+        print(f"DEBUG: After merge, document_history.documents: {self._config.get('document_history', {}).get('documents', {})}")
     
     def get(self, key_path: str, default=None):
         """Get configuration value using dot notation (e.g., 'window.width')."""
@@ -145,12 +152,13 @@ class Config:
         # Limit to max recent files
         max_recent = self.get('files.max_recent', MAX_RECENT_FILES)
         recent_files = recent_files[:max_recent]
-        
         self.set('files.recent_files', recent_files)
     
     def get_document_history(self) -> Dict[str, Dict]:
         """Get document reading history."""
-        return self.get('document_history.documents', {})
+        result = self.get('document_history.documents', {})
+        print(f"DEBUG: get_document_history returning: {result}")
+        return result
     
     def get_recent_documents(self) -> List[Dict]:
         """Get list of recently read documents with their reading progress."""
@@ -192,16 +200,19 @@ class Config:
         
         # Add to beginning of list
         recent_docs.insert(0, doc_entry)
-        
-        # Keep only the most recent documents
+          # Keep only the most recent documents
         recent_docs = recent_docs[:MAX_RECENT_DOCUMENTS]
         
         self.set('document_history.recent_documents', recent_docs)
-    
+
     def get_last_page(self, file_path: str) -> int:
         """Get the last read page for a document."""
         documents = self.get_document_history()
-        return documents.get(file_path, {}).get('last_page', 0)
+        result = documents.get(file_path, {}).get('last_page', 0)
+        print(f"DEBUG: get_last_page for {file_path}")
+        print(f"DEBUG: documents keys: {list(documents.keys())}")
+        print(f"DEBUG: returned last_page: {result}")
+        return result
     
     def remove_document_from_history(self, file_path: str):
         """Remove a document from reading history."""

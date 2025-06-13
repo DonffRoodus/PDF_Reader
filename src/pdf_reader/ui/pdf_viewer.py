@@ -535,7 +535,9 @@ class PDFViewer(QWidget):
             return
 
         try:
+            print(f"DEBUG: _setup_continuous_view starting, current_page: {self.current_page}")
             self._clear_continuous_view()
+            print(f"DEBUG: After _clear_continuous_view, current_page: {self.current_page}")
             QApplication.processEvents()
             vp_width = self.scroll_area.viewport().width()
             if vp_width > 20:
@@ -562,7 +564,9 @@ class PDFViewer(QWidget):
                 )
                 self.continuous_page_layout.addSpacerItem(spacer)
 
+            print(f"DEBUG: Before jump_to_page, current_page: {self.current_page}")
             self.jump_to_page(self.current_page)
+            print(f"DEBUG: _setup_continuous_view completed, jumped to page: {self.current_page}")
         except Exception as e:
             print(f"Error setting up continuous view: {e}")
 
@@ -656,7 +660,7 @@ class PDFViewer(QWidget):
             self.single_double_canvas.adjustSize()
         except Exception as e:
             print(f"Error rendering page: {e}")
-
+    
     def _set_view_mode_internal(self, mode: ViewMode):
         """Internal method to set view mode."""
         self.view_mode = mode
@@ -670,16 +674,24 @@ class PDFViewer(QWidget):
             
         try:
             previous_mode = self.view_mode
+            current_page_backup = self.current_page  # Backup current page
             self._set_view_mode_internal(mode)
 
             if mode == ViewMode.CONTINUOUS_SCROLL:
                 self.view_stack.setCurrentWidget(self.continuous_page_container)
                 if previous_mode != ViewMode.CONTINUOUS_SCROLL or force_setup:
+                    self.current_page = current_page_backup  # Restore page before setup
+                    print(f"DEBUG: Setting up continuous view, restored to page: {self.current_page}")
                     self._setup_continuous_view()
+                else:
+                    # Jump to current page to ensure proper scrolling
+                    self.jump_to_page(self.current_page)
             else:
                 if previous_mode == ViewMode.CONTINUOUS_SCROLL:
                     self._clear_continuous_view()
                 self.view_stack.setCurrentWidget(self.single_double_canvas)
+                  # Restore current page
+                self.current_page = current_page_backup
                 
                 self.single_double_canvas.clear()
                 self.single_double_canvas.setPixmap(QPixmap())
@@ -705,6 +717,7 @@ class PDFViewer(QWidget):
                 self.update()
                 QApplication.processEvents()
 
+            print(f"DEBUG: View mode switch complete, final page: {self.current_page}")
             self.view_mode_changed.emit(self.view_mode)
         except Exception as e:
             print(f"Error setting view mode: {e}")
@@ -772,6 +785,7 @@ class PDFViewer(QWidget):
                     self.current_page_changed_in_continuous_scroll.emit(self.current_page)
                 else:
                     self.render_page_with_annotations()
+                    self.current_page_changed.emit(self.current_page)
             elif (
                 self.view_mode == ViewMode.DOUBLE_PAGE
                 and self.current_page == self.doc.page_count - 2
@@ -779,6 +793,7 @@ class PDFViewer(QWidget):
             ):
                 self.current_page += 1
                 self.render_page_with_annotations()
+                self.current_page_changed.emit(self.current_page)
             elif (
                 self.view_mode != ViewMode.DOUBLE_PAGE
                 and self.current_page < self.doc.page_count - 1
@@ -789,6 +804,7 @@ class PDFViewer(QWidget):
                     self.current_page_changed_in_continuous_scroll.emit(self.current_page)
                 else:
                     self.render_page_with_annotations()
+                    self.current_page_changed.emit(self.current_page)
             
             # Emit general page change signal if page actually changed
             if old_page != self.current_page:
@@ -828,6 +844,7 @@ class PDFViewer(QWidget):
         try:
             old_page = self.current_page
             self.current_page = page_num
+            print(f"DEBUG: jump_to_page called, from {old_page} to {page_num}, view_mode: {self.view_mode}")
             
             if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
                 target_y = self.continuous_page_layout.contentsMargins().top()
@@ -839,7 +856,8 @@ class PDFViewer(QWidget):
 
                 self.scroll_area.verticalScrollBar().setValue(int(target_y))
                 QApplication.processEvents()
-                self._update_visible_pages()
+                # Don't call _update_visible_pages here as it would reset current_page
+                # Just emit the signal to indicate the page changed
                 self.current_page_changed_in_continuous_scroll.emit(self.current_page)
             else:
                 if self.view_mode == ViewMode.DOUBLE_PAGE:

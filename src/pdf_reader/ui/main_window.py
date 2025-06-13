@@ -29,7 +29,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tab_widget)
 
         self.recent_files = []
-          # Timer for saving reading progress
+        
+        # Timer for saving reading progress
         self.progress_save_timer = QTimer()
         self.progress_save_timer.timeout.connect(self.save_current_progress)
         self.progress_save_timer.setSingleShot(True)
@@ -386,6 +387,9 @@ class MainWindow(QMainWindow):
         viewer.current_page_changed_in_continuous_scroll.connect(
             self.update_page_info_from_signal
         )
+        viewer.current_page_changed_in_continuous_scroll.connect(
+            lambda: self.schedule_progress_save()
+        )
         viewer.current_page_changed.connect(
             lambda: self.schedule_progress_save()
         )
@@ -393,15 +397,20 @@ class MainWindow(QMainWindow):
 
         tab_index = self.tab_widget.addTab(viewer, os.path.basename(file_path))
         self.tab_widget.setCurrentIndex(tab_index)
-        
-        # Restore last read page if available
+          # Restore last read page if available
         if viewer.doc:
             last_page = config.get_last_page(file_path)
-            if last_page > 0 and last_page < viewer.doc.page_count:
-                viewer.jump_to_page(last_page)        # Save document access immediately
-        if viewer.doc:
-            config.update_document_progress(file_path, viewer.current_page, viewer.doc.page_count)
-            config.save()
+            print(f"DEBUG: Restoring document {os.path.basename(file_path)}, last_page from config: {last_page}, current_page: {viewer.current_page}")
+            if last_page >= 0 and last_page < viewer.doc.page_count:
+                print(f"DEBUG: Jumping to saved page: {last_page}")
+                viewer.jump_to_page(last_page)
+                # Don't save immediately after restoring - let the scheduled save handle it
+            else:
+                print(f"DEBUG: Not jumping - last_page: {last_page}, total_pages: {viewer.doc.page_count}")
+                # Only save immediately if this is a new document (last_page < 0)
+                if last_page < 0:
+                    config.update_document_progress(file_path, viewer.current_page, viewer.doc.page_count)
+                    config.save()
 
     def close_tab(self, index):
         """Close a tab and clean up resources."""
@@ -578,12 +587,12 @@ class MainWindow(QMainWindow):
             self.recent_files.remove(file_path)
         self.recent_files.insert(0, file_path)
         self.recent_files = self.recent_files[:10]
-        
         # Also add to config
         config.add_recent_file(file_path)
         config.save()
         
         self.update_recent_files_menu()
+
     def update_recent_files_menu(self):
         """Update the recent files menu with progress information."""
         self.recent_files_menu.clear()
@@ -635,14 +644,16 @@ class MainWindow(QMainWindow):
         if viewer and viewer.file_path and viewer.doc:
             current_page = viewer.current_page
             total_pages = viewer.doc.page_count
+            print(f"Saving progress: {os.path.basename(viewer.file_path)} - Page {current_page + 1}/{total_pages}")
             config.update_document_progress(viewer.file_path, current_page, total_pages)
             config.save()
-            # Update the recent documents display
-            self.update_recent_documents_dock()
 
     def schedule_progress_save(self):
         """Schedule a progress save after a delay to avoid too frequent saves."""
-        self.progress_save_timer.start(2000) # Save after 2 seconds of inactivity
+        # Only print if timer wasn't already active
+        if not self.progress_save_timer.isActive():
+            print(f"Scheduling progress save in 2 seconds...")
+        self.progress_save_timer.start(2000)  # Save after 2 seconds of inactivity
 
     def update_view_menu_state(self):
         """Update the view mode menu based on the current viewer."""
@@ -671,19 +682,6 @@ class MainWindow(QMainWindow):
         self.update_toc()
         self.update_bookmarks()
         self.update_view_menu_state()
-
-    def save_current_progress(self):
-        """Save current reading progress to configuration."""
-        viewer = self.current_viewer()
-        if viewer and viewer.file_path and viewer.doc:
-            current_page = viewer.current_page
-            total_pages = viewer.doc.page_count
-            config.update_document_progress(viewer.file_path, current_page, total_pages)
-            config.save()
-
-    def schedule_progress_save(self):
-        """Schedule a progress save after a delay to avoid too frequent saves."""
-        self.progress_save_timer.start(2000)  # Save after 2 seconds of inactivity
 
     def closeEvent(self, event):
         """Handle application close event to save progress."""
