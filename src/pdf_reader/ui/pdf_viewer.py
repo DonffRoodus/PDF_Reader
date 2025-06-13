@@ -690,6 +690,7 @@ class PDFViewer(QWidget):
                 self.view_stack.setCurrentWidget(self.continuous_page_container)
                 if previous_mode != ViewMode.CONTINUOUS_SCROLL or force_setup:
                     self.current_page = current_page_backup  # Restore page before setup
+                    self.jump_to_page(self.current_page)
                     self._debug_print(f"Setting up continuous view, restored to page: {self.current_page}")
                     self._setup_continuous_view()
                 else:
