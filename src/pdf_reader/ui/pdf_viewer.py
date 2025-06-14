@@ -1,9 +1,10 @@
 """PDF viewer widget component."""
 
+import os
 import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QScrollArea, QLabel, QStackedWidget,
-    QSpacerItem, QSizePolicy, QApplication, QInputDialog
+    QSpacerItem, QSizePolicy, QApplication, QInputDialog, QMessageBox, QLineEdit
 )
 from PyQt6.QtGui import QPixmap, QPainter, QImage, QPen, QColor, QFont
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QPoint, QRect
@@ -359,20 +360,126 @@ class PDFViewer(QWidget):
             print(f"Error redrawing visible pages: {e}")
 
     def load_pdf(self, file_path):
-        """Load a PDF file for viewing."""
+        """Load a PDF file for viewing with comprehensive error handling."""
         self.file_path = file_path
+        
+        # Validate file path
+        if not file_path or not os.path.exists(file_path):
+            self._show_error_message("File not found", f"The file '{file_path}' does not exist.")
+            return False
+            
+        # Check file size (warn for very large files)
         try:
+            file_size = os.path.getsize(file_path)
+            if file_size > 100 * 1024 * 1024:  # 100MB
+                reply = QMessageBox.question(
+                    self,
+                    "Large File Warning",
+                    f"This file is {file_size // (1024*1024)}MB. Loading may take some time. Continue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.No:
+                    return False
+        except OSError:
+            pass  # File size check failed, continue anyway
+        
+        try:
+            # Attempt to open the PDF
             self.doc = fitz.open(file_path)
+            
+            # Validate PDF content
+            if self.doc.page_count == 0:
+                self._show_error_message("Invalid PDF", "This PDF file contains no pages.")
+                return False
+                
+            # Check if PDF is encrypted and handle password
+            if self.doc.needs_pass:
+                success = self._handle_encrypted_pdf()
+                if not success:
+                    return False
+            
+            # Initialize page structures
             self._page_labels_continuous = [None] * self.doc.page_count
             self._setup_annotation_event_filters()
+            
+            # Set default view mode
             self.set_view_mode(ViewMode.SINGLE_PAGE, force_setup=True)
-            # Test text extraction on first page
+            
+            # Test text extraction on first page for search functionality
             text = self.extract_page_text(0)
-            print(f"Sample text from page 1: {text[:100] + '...' if len(text) > 100 else text}")
+            if self._debug_mode:
+                print(f"Sample text from page 1: {text[:100] + '...' if len(text) > 100 else text}")
+            
+            # Emit success signal
+            self.current_page_changed.emit(self.current_page)
+            return True
+            
+        except fitz.FileDataError:
+            self._show_error_message("Corrupted File", "This PDF file appears to be corrupted and cannot be opened.")
+            return False
+        except fitz.FileNotFoundError:
+            self._show_error_message("File Not Found", f"Could not find the file: {file_path}")
+            return False
+        except PermissionError:
+            self._show_error_message("Permission Denied", "You don't have permission to open this file.")
+            return False
         except Exception as e:
-            print(f"Error opening PDF {file_path}: {e}")
-            self.single_double_canvas.setText("Could not load PDF.")
-            self.view_stack.setCurrentWidget(self.single_double_canvas)
+            self._show_error_message("Error Loading PDF", f"An unexpected error occurred while loading the PDF:\n{str(e)}")
+            return False
+
+    def _handle_encrypted_pdf(self):
+        """Handle password-protected PDF files."""
+        from PyQt6.QtWidgets import QInputDialog
+        
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            password, ok = QInputDialog.getText(
+                self,
+                "Password Required",
+                f"This PDF is password protected. Please enter the password:\n"
+                f"(Attempt {attempt + 1} of {max_attempts})",
+                QLineEdit.EchoMode.Password
+            )
+            
+            if not ok:  # User cancelled
+                return False
+                
+            if self.doc.authenticate(password):
+                return True
+            else:
+                if attempt < max_attempts - 1:
+                    QMessageBox.warning(
+                        self,
+                        "Incorrect Password",
+                        "The password you entered is incorrect. Please try again."
+                    )
+        
+        QMessageBox.critical(
+            self,
+            "Authentication Failed",
+            "Failed to authenticate after multiple attempts. The file cannot be opened."
+        )
+        return False
+
+    def _show_error_message(self, title, message):
+        """Show error message and update UI accordingly."""
+        # Update canvas to show error
+        self.single_double_canvas.setText(f"❌ {title}\n\n{message}")
+        self.single_double_canvas.setStyleSheet("""
+            QLabel {
+                background-color: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+                border-radius: 6px;
+                padding: 20px;
+                font-size: 14px;
+                text-align: center;
+            }
+        """)
+        self.view_stack.setCurrentWidget(self.single_double_canvas)
+        
+        # Show message box for critical errors
+        QMessageBox.critical(self, title, message)
     
     def _setup_annotation_event_filters(self):
         """Set up event filters for annotation handling."""

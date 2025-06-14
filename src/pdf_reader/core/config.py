@@ -68,6 +68,9 @@ class Config:
             "document_history": {
                 "documents": {},  # file_path: {"last_page": int, "last_opened": str, "total_pages": int}
                 "recent_documents": []  # List of recently opened documents with reading progress
+            },
+            "app": {
+                "first_run": True
             }
         }
     
@@ -103,11 +106,7 @@ class Config:
                     # Allow new keys to be added to dictionaries (especially for documents)
                     default[key] = value
         
-        print(f"DEBUG: Merging config. document_history in saved: {'document_history' in saved_config}")
-        if 'document_history' in saved_config:
-            print(f"DEBUG: document_history.documents in saved: {'documents' in saved_config['document_history']}")
         merge_dict(self._config, saved_config)
-        print(f"DEBUG: After merge, document_history.documents: {self._config.get('document_history', {}).get('documents', {})}")
     
     def get(self, key_path: str, default=None):
         """Get configuration value using dot notation (e.g., 'window.width')."""
@@ -151,17 +150,34 @@ class Config:
         
         # Limit to max recent files
         max_recent = self.get('files.max_recent', MAX_RECENT_FILES)
-        recent_files = recent_files[:max_recent]
+        if len(recent_files) > max_recent:
+            recent_files = recent_files[:max_recent]
+        
         self.set('files.recent_files', recent_files)
-    
-    def get_document_history(self) -> Dict[str, Dict]:
-        """Get document reading history."""
-        result = self.get('document_history.documents', {})
-        print(f"DEBUG: get_document_history returning: {result}")
-        return result
-    
+
+    def clear_recent_files(self):
+        """Clear the recent files list."""
+        self._config["files"]["recent_files"] = []
+
+    def is_first_run(self):
+        """Check if this is the first run of the application."""
+        return self._config.get("app", {}).get("first_run", True)
+
+    def mark_first_run_complete(self):
+        """Mark that the first run has been completed."""
+        if "app" not in self._config:
+            self._config["app"] = {}
+        self._config["app"]["first_run"] = False
+
+    def save_ui_preferences(self, show_bookmarks_panel=False, show_toc_panel=False):
+        """Save UI panel preferences."""
+        if "ui" not in self._config:
+            self._config["ui"] = {}
+        self._config["ui"]["show_bookmarks_panel"] = show_bookmarks_panel
+        self._config["ui"]["show_toc_panel"] = show_toc_panel
+
     def get_recent_documents(self) -> List[Dict]:
-        """Get list of recently read documents with their reading progress."""
+        """Get list of recent documents with reading progress."""
         return self.get('document_history.recent_documents', [])
     
     def update_document_progress(self, file_path: str, current_page: int, total_pages: int):
@@ -197,22 +213,21 @@ class Config:
             "last_opened": timestamp,
             "progress_percent": round((current_page / max(total_pages, 1)) * 100, 1)
         }
-        
-        # Add to beginning of list
+          # Add to beginning of list
         recent_docs.insert(0, doc_entry)
-          # Keep only the most recent documents
+        # Keep only the most recent documents
         recent_docs = recent_docs[:MAX_RECENT_DOCUMENTS]
         
         self.set('document_history.recent_documents', recent_docs)
 
+    def get_document_history(self):
+        """Get the document history dictionary."""
+        return self._config.get("document_history", {}).get("documents", {})
+
     def get_last_page(self, file_path: str) -> int:
         """Get the last read page for a document."""
         documents = self.get_document_history()
-        result = documents.get(file_path, {}).get('last_page', 0)
-        print(f"DEBUG: get_last_page for {file_path}")
-        print(f"DEBUG: documents keys: {list(documents.keys())}")
-        print(f"DEBUG: returned last_page: {result}")
-        return result
+        return documents.get(file_path, {}).get('last_page', 0)
     
     def remove_document_from_history(self, file_path: str):
         """Remove a document from reading history."""
@@ -227,6 +242,29 @@ class Config:
         recent_docs = [doc for doc in recent_docs if doc.get('file_path') != file_path]
         self.set('document_history.recent_documents', recent_docs)
         
+    def get_window_state(self):
+        """Get window state with defaults."""
+        window_config = self._config.get("window", {})
+        return {
+            "width": window_config.get("width", DEFAULT_WINDOW_WIDTH),
+            "height": window_config.get("height", DEFAULT_WINDOW_HEIGHT),
+            "x": window_config.get("x", 100),
+            "y": window_config.get("y", 100),
+            "maximized": window_config.get("maximized", False)
+        }
+
+    def save_window_state(self, width, height, x, y, maximized):
+        """Save window state."""
+        if "window" not in self._config:
+            self._config["window"] = {}
+        self._config["window"].update({
+            "width": width,
+            "height": height,
+            "x": x,
+            "y": y,
+            "maximized": maximized
+        })
+
 
 # Global configuration instance
 config = Config()
