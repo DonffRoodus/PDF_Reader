@@ -41,11 +41,13 @@ def get_application_stylesheet():
             background: #dee2e6;
             color: #212529;
         }
-        
-        QTabBar::close-button {
-            image: url(close.png);
+          QTabBar::close-button {
             subcontrol-position: right;
             margin: 2px;
+            border: 1px solid transparent;
+            border-radius: 3px;
+            width: 12px;
+            height: 12px;
         }
         
         /* Toolbar Styling */
@@ -112,8 +114,8 @@ def get_application_stylesheet():
             padding: 8px 12px;
             font-size: 14px;
             color: #495057;
-        }
-          QLineEdit:focus {
+        }        
+        QLineEdit:focus {
             border-color: #86b7fe;
             outline: none;
         }
@@ -228,8 +230,8 @@ def get_application_stylesheet():
         QMenuBar::item:selected {
             background: #e9ecef;
             color: #212529;
-        }
-          QMenu {
+        }        
+        QMenu {
             background: #ffffff;
             border: 1px solid #dee2e6;
             border-radius: 6px;
@@ -319,35 +321,9 @@ def get_application_stylesheet():
             padding: 6px 8px;
             font-size: 12px;
         }
-        
-        /* Accessibility improvements */
+          /* Accessibility improvements */
         *:focus {
             outline: 2px solid #86b7fe;
             outline-offset: 2px;
-        }
-        
-        /* High contrast mode support */
-        @media (prefers-contrast: high) {
-            QMainWindow {
-                background-color: #ffffff;
-                color: #000000;
-            }
-            
-            QPushButton, QToolButton {
-                border: 2px solid #000000;
-            }
-            
-            QLineEdit {
-                border: 2px solid #000000;
-            }
-        }
-        
-        /* Reduce motion for users who prefer it */
-        @media (prefers-reduced-motion: reduce) {
-            * {
-                animation-duration: 0.01ms !important;
-                animation-iteration-count: 1 !important;
-                transition-duration: 0.01ms !important;
-            }
         }
     """
