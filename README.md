@@ -19,6 +19,8 @@ A modern, feature-rich PDF reader application built with PyQt6 and PyMuPDF. This
 - **Tabbed Interface**: Open multiple documents simultaneously
 - **Table of Contents**: Quick navigation through document structure
 - **Bookmarks**: Full bookmark functionality with custom titles and management
+- **Eye-Friendly Design**: Warm, cream-colored theme optimized for extended reading sessions
+- **Reduced Eye Strain**: Soft color palette that minimizes blue light exposure
 - **Modern UI**: Clean, intuitive interface with customizable themes
 - **Responsive Design**: Adaptive layout for different screen sizes
 
@@ -222,6 +224,25 @@ PDF_Reader/
 | `Home/End` | Go to first/last page |
 | `F11` | Toggle fullscreen (planned) |
 
+## 👁️ Eye-Friendly Design
+
+This PDF Reader features a specially designed **warm color scheme** optimized for comfortable long-term reading:
+
+### Design Benefits:
+- **🌅 Warm Color Palette**: Cream and beige backgrounds instead of harsh white
+- **🔆 Reduced Blue Light**: Minimizes eye strain from prolonged screen exposure
+- **🎨 Soft Contrasts**: Gentle color transitions that are easier on the eyes
+- **☕ Earth Tones**: Brown and tan accent colors for a natural, calming feel
+- **📖 Reading Optimized**: Perfect for extended document reading sessions
+
+### Color Scheme Features:
+- **Background**: Warm cream tones (`#faf8f3`, `#fefcf9`)
+- **Text**: Soft dark brown (`#3d3833`, `#5d564d`) for comfortable readability
+- **Accents**: Warm brown highlights (`#8b7355`) instead of bright blues
+- **Borders**: Subtle earth-tone borders for gentle visual separation
+
+This thoughtful design approach makes the application ideal for students, researchers, and professionals who spend hours reading documents.
+
 ## ⚙️ Configuration
 
 The application uses a robust configuration system located in `src/pdf_reader/core/config.py`. 
@@ -230,6 +251,7 @@ The application uses a robust configuration system located in `src/pdf_reader/co
 
 - **Default View Mode**: Set your preferred viewing mode (single, double, continuous)
 - **Window Geometry**: Remember window size and position
+- **Eye-Friendly Theme**: Warm color scheme designed for comfortable reading
 - **Theme Preferences**: Choose from available themes and styling options
 - **Performance Settings**: Adjust memory usage and rendering optimization
 - **Bookmark Behavior**: Configure bookmark creation and management
@@ -341,6 +363,7 @@ The application follows a clean, modular architecture with clear separation of c
 #### **Package Organization**
 - **`src/pdf_reader/core/`**: Business logic, data models, configuration
 - **`src/pdf_reader/ui/`**: User interface components and styling
+  - **`styling.py`**: Eye-friendly color scheme and theme definitions
 - **`tests/`**: Comprehensive test suite for all components
 - **`docs/`**: Detailed documentation and guides
 
@@ -486,6 +509,8 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 ### Version 2.0.0 (Current)
 - **🏗️ Major Architecture Refactoring**: Complete rewrite with modular design
 - **✨ Enhanced UI**: Improved user interface with better responsiveness
+- **🛡️ Eye-Friendly Design**: Warm color scheme optimized for extended reading sessions
+- **🌅 Reduced Eye Strain**: Cream backgrounds and earth tones minimize blue light exposure
 - **📝 Annotation System**: Full annotation support with highlighting and notes
 - **🔖 Advanced Bookmarks**: Custom bookmark titles and management
 - **🧪 Comprehensive Testing**: Full test suite with 90%+ coverage
