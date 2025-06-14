@@ -321,7 +321,6 @@ class MainWindow(QMainWindow):
         file_menu = self.menuBar().addMenu("&File")
         
         open_action = QAction(QIcon.fromTheme("document-open"), "&Open...", self)
-        open_action.setShortcut("Ctrl+O")
         open_action.setToolTip("Open a PDF document (Ctrl+O)")
         open_action.setStatusTip("Open a PDF document from your computer")
         open_action.triggered.connect(self.open_file)
@@ -344,7 +343,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(close_tab_action)
 
         exit_action = QAction("E&xit", self)
-        exit_action.setShortcut("Ctrl+Q")
+
         exit_action.setToolTip("Exit the application (Ctrl+Q)")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)        # View Menu
@@ -357,7 +356,7 @@ class MainWindow(QMainWindow):
         self.view_mode_group.setExclusive(True)
 
         self.single_page_action = QAction("&Single Page", self, checkable=True)
-        self.single_page_action.setShortcut("1")
+
         self.single_page_action.setToolTip("Single page view (Press 1)")
         self.single_page_action.setStatusTip("Display one page at a time")
         self.single_page_action.triggered.connect(
@@ -367,7 +366,7 @@ class MainWindow(QMainWindow):
         self.view_mode_group.addAction(self.single_page_action)
 
         self.fit_page_action = QAction("Fit &Page", self, checkable=True)
-        self.fit_page_action.setShortcut("2")
+
         self.fit_page_action.setToolTip("Fit page to window (Press 2)")
         self.fit_page_action.setStatusTip("Fit entire page within the window")
         self.fit_page_action.triggered.connect(
@@ -377,7 +376,7 @@ class MainWindow(QMainWindow):
         self.view_mode_group.addAction(self.fit_page_action)
 
         self.fit_width_action = QAction("Fit &Width", self, checkable=True)
-        self.fit_width_action.setShortcut("3")
+
         self.fit_width_action.setToolTip("Fit page width to window (Press 3)")
         self.fit_width_action.setStatusTip("Fit page width to window for optimal reading")
         self.fit_width_action.triggered.connect(
@@ -387,7 +386,7 @@ class MainWindow(QMainWindow):
         self.view_mode_group.addAction(self.fit_width_action)
 
         self.double_page_action = QAction("&Double Page", self, checkable=True)
-        self.double_page_action.setShortcut("4")
+
         self.double_page_action.setToolTip("Double page view (Press 4)")
         self.double_page_action.setStatusTip("Display two pages side by side")
         self.double_page_action.triggered.connect(
@@ -397,7 +396,7 @@ class MainWindow(QMainWindow):
         self.view_mode_group.addAction(self.double_page_action)
 
         self.continuous_scroll_action = QAction("&Continuous Scroll", self, checkable=True)
-        self.continuous_scroll_action.setShortcut("5")
+
         self.continuous_scroll_action.setToolTip("Continuous scroll view (Press 5)")
         self.continuous_scroll_action.setStatusTip("Scroll through all pages continuously")
         self.continuous_scroll_action.triggered.connect(
@@ -412,19 +411,19 @@ class MainWindow(QMainWindow):
         
         # Zoom actions
         zoom_in_menu_action = QAction("Zoom &In", self)
-        zoom_in_menu_action.setShortcut("Ctrl++")
+
         zoom_in_menu_action.setToolTip("Zoom in (Ctrl++)")
         zoom_in_menu_action.triggered.connect(self.zoom_in)
         view_mode_menu.addAction(zoom_in_menu_action)
         
         zoom_out_menu_action = QAction("Zoom &Out", self)
-        zoom_out_menu_action.setShortcut("Ctrl+-")
+
         zoom_out_menu_action.setToolTip("Zoom out (Ctrl+-)")
         zoom_out_menu_action.triggered.connect(self.zoom_out)
         view_mode_menu.addAction(zoom_out_menu_action)
         
         reset_zoom_action = QAction("&Reset Zoom", self)
-        reset_zoom_action.setShortcut("Ctrl+0")
+
         reset_zoom_action.setToolTip("Reset zoom to 100% (Ctrl+0)")
         reset_zoom_action.triggered.connect(self.reset_zoom)
         view_mode_menu.addAction(reset_zoom_action)        # Bookmarks Menu
@@ -432,14 +431,14 @@ class MainWindow(QMainWindow):
         bookmarks_menu.setIcon(QIcon.fromTheme("bookmark"))
         
         self.add_bookmark_action = QAction(QIcon.fromTheme("bookmark-new"), "&Add Bookmark", self)
-        self.add_bookmark_action.setShortcut("Ctrl+B")
+
         self.add_bookmark_action.setToolTip("Add bookmark for current page (Ctrl+B)")
         self.add_bookmark_action.setStatusTip("Create a bookmark for the current page")
         self.add_bookmark_action.triggered.connect(self.add_bookmark)
         bookmarks_menu.addAction(self.add_bookmark_action)
         
         self.remove_bookmark_action = QAction(QIcon.fromTheme("bookmark-remove"), "&Remove Bookmark", self)
-        self.remove_bookmark_action.setShortcut("Ctrl+Shift+B")
+
         self.remove_bookmark_action.setToolTip("Remove bookmark from current page (Ctrl+Shift+B)")
         self.remove_bookmark_action.setStatusTip("Remove bookmark from the current page")
         self.remove_bookmark_action.triggered.connect(self.remove_current_bookmark)
@@ -460,19 +459,19 @@ class MainWindow(QMainWindow):
         annotation_tools_submenu = annotations_menu.addMenu("Annotation &Tools")
         
         highlight_menu_action = QAction(QIcon.fromTheme("marker"), "&Highlight Text", self)
-        highlight_menu_action.setShortcut("Ctrl+H")
+
         highlight_menu_action.setToolTip("Highlight selected text (Ctrl+H)")
         highlight_menu_action.triggered.connect(lambda: self.toggle_annotation(AnnotationType.HIGHLIGHT))
         annotation_tools_submenu.addAction(highlight_menu_action)
         
         underline_menu_action = QAction(QIcon.fromTheme("format-text-underline"), "&Underline Text", self)
-        underline_menu_action.setShortcut("Ctrl+U")
+
         underline_menu_action.setToolTip("Underline selected text (Ctrl+U)")
         underline_menu_action.triggered.connect(lambda: self.toggle_annotation(AnnotationType.UNDERLINE))
         annotation_tools_submenu.addAction(underline_menu_action)
         
         text_note_menu_action = QAction(QIcon.fromTheme("text-field"), "Add &Text Note", self)
-        text_note_menu_action.setShortcut("Ctrl+T")
+
         text_note_menu_action.setToolTip("Add text annotation (Ctrl+T)")
         text_note_menu_action.triggered.connect(lambda: self.toggle_annotation(AnnotationType.TEXT))
         annotation_tools_submenu.addAction(text_note_menu_action)
@@ -480,14 +479,14 @@ class MainWindow(QMainWindow):
         annotations_menu.addSeparator()
         
         clear_page_annotations_action = QAction(QIcon.fromTheme("edit-clear"), "Clear &Page Annotations", self)
-        clear_page_annotations_action.setShortcut("Ctrl+Alt+C")
+
         clear_page_annotations_action.setToolTip("Clear all annotations on current page (Ctrl+Alt+C)")
         clear_page_annotations_action.setStatusTip("Remove all annotations from the current page")
         clear_page_annotations_action.triggered.connect(self.clear_current_page_annotations)
         annotations_menu.addAction(clear_page_annotations_action)
         
         clear_all_annotations_action = QAction(QIcon.fromTheme("edit-clear-all"), "Clear &All Annotations", self)
-        clear_all_annotations_action.setShortcut("Ctrl+Alt+Shift+C")
+
         clear_all_annotations_action.setToolTip("Clear all annotations in document (Ctrl+Alt+Shift+C)")
         clear_all_annotations_action.setStatusTip("Remove all annotations from the entire document")
         clear_all_annotations_action.triggered.connect(self.clear_all_annotations)
@@ -503,7 +502,7 @@ class MainWindow(QMainWindow):
         help_menu.setIcon(QIcon.fromTheme("help-about"))
         
         keyboard_shortcuts_action = QAction(QIcon.fromTheme("preferences-desktop-keyboard"), "&Keyboard Shortcuts", self)
-        keyboard_shortcuts_action.setShortcut("F1")
+
         keyboard_shortcuts_action.setToolTip("Show keyboard shortcuts (F1)")
         keyboard_shortcuts_action.triggered.connect(self.show_keyboard_shortcuts)
         help_menu.addAction(keyboard_shortcuts_action)
@@ -541,21 +540,21 @@ class MainWindow(QMainWindow):
         
         # File operations
         open_action = QAction(QIcon.fromTheme("document-open"), "Open", self)
-        open_action.setShortcut("Ctrl+O")
+
         open_action.setToolTip("Open a PDF document (Ctrl+O)")
         open_action.triggered.connect(self.open_file)
         toolbar.addAction(open_action)
         
         # Navigation
         self.prev_page_action = QAction(QIcon.fromTheme("go-previous"), "Previous", self)
-        self.prev_page_action.setShortcut("Left")
+
         self.prev_page_action.setToolTip("Previous page (Left arrow or Page Up)")
         self.prev_page_action.triggered.connect(self.prev_page)
         self.prev_page_action.setEnabled(False)
         toolbar.addAction(self.prev_page_action)
 
         self.next_page_action = QAction(QIcon.fromTheme("go-next"), "Next", self)
-        self.next_page_action.setShortcut("Right")
+
         self.next_page_action.setToolTip("Next page (Right arrow or Page Down)")
         self.next_page_action.triggered.connect(self.next_page)
         self.next_page_action.setEnabled(False)
@@ -574,14 +573,14 @@ class MainWindow(QMainWindow):
 
         # Zoom controls
         self.zoom_out_action = QAction(QIcon.fromTheme("zoom-out"), "Zoom Out", self)
-        self.zoom_out_action.setShortcut("Ctrl+-")
+
         self.zoom_out_action.setToolTip("Zoom out (Ctrl+-)")
         self.zoom_out_action.triggered.connect(self.zoom_out)
         self.zoom_out_action.setEnabled(False)
         toolbar.addAction(self.zoom_out_action)
 
         self.zoom_in_action = QAction(QIcon.fromTheme("zoom-in"), "Zoom In", self)
-        self.zoom_in_action.setShortcut("Ctrl++")
+
         self.zoom_in_action.setToolTip("Zoom in (Ctrl++)")
         self.zoom_in_action.triggered.connect(self.zoom_in)
         self.zoom_in_action.setEnabled(False)
@@ -591,7 +590,7 @@ class MainWindow(QMainWindow):
         
         # Bookmarks
         self.add_bookmark_toolbar_action = QAction(QIcon.fromTheme("bookmark-new"), "Bookmark", self)
-        self.add_bookmark_toolbar_action.setShortcut("Ctrl+B")
+
         self.add_bookmark_toolbar_action.setToolTip("Add bookmark for current page (Ctrl+B)")
         self.add_bookmark_toolbar_action.triggered.connect(self.add_bookmark)
         self.add_bookmark_toolbar_action.setEnabled(False)
@@ -612,14 +611,14 @@ class MainWindow(QMainWindow):
         
         # Search navigation
         self.search_prev_action = QAction(QIcon.fromTheme("go-up"), "Previous Result", self)
-        self.search_prev_action.setShortcut("Shift+F3")
+
         self.search_prev_action.setToolTip("Previous search result (Shift+F3)")
         self.search_prev_action.triggered.connect(lambda: self.navigate_search(False))
         self.search_prev_action.setEnabled(False)
         toolbar.addAction(self.search_prev_action)
 
         self.search_next_action = QAction(QIcon.fromTheme("go-down"), "Next Result", self)
-        self.search_next_action.setShortcut("F3")
+
         self.search_next_action.setToolTip("Next search result (F3)")
         self.search_next_action.triggered.connect(lambda: self.navigate_search(True))
         self.search_next_action.setEnabled(False)
