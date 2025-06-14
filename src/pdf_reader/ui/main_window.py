@@ -49,6 +49,39 @@ class MainWindow(QMainWindow):
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
+          # Style the tab widget for better close button visibility
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #c0c0c0;
+            }
+            QTabBar::tab {
+                background: #f0f0f0;
+                border: 1px solid #c0c0c0;
+                padding: 8px 12px;
+                margin-right: 2px;
+                min-width: 100px;
+            }
+            QTabBar::tab:selected {
+                background: #ffffff;
+                border-bottom: 1px solid #ffffff;
+            }
+            QTabBar::tab:hover {
+                background: #e0e0e0;
+            }
+            QTabBar::close-button {
+                width: 16px;
+                height: 16px;
+                border: 1px solid transparent;
+                border-radius: 8px;
+                background: #f0f0f0;
+                margin: 2px;
+            }
+            QTabBar::close-button:hover {
+                background: #ff6666;
+                border: 1px solid #cc0000;
+            }
+        """)
+        
         self.setCentralWidget(self.tab_widget)
 
         self.recent_files = []
