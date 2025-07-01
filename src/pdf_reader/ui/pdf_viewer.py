@@ -887,6 +887,31 @@ class PDFViewer(QWidget):
         except Exception as e:
             print(f"Error zooming out: {e}")
 
+    def reset_zoom(self):
+        """Reset zoom to the default value (100%)."""
+        if not self.doc:
+            return
+
+        try:
+            from ..core.config import DEFAULT_ZOOM_FACTOR
+            
+            # Reset zoom factor to default
+            self.zoom_factor = DEFAULT_ZOOM_FACTOR
+            
+            # Switch out of automatic fit modes to manual zoom
+            if self.view_mode in [ViewMode.FIT_PAGE, ViewMode.FIT_WIDTH]:
+                self._set_view_mode_internal(ViewMode.SINGLE_PAGE)
+            
+            # Re-render based on current view mode
+            if self.view_mode == ViewMode.CONTINUOUS_SCROLL:
+                self._setup_continuous_view()
+            else:
+                self.render_page_with_annotations()
+                
+            self.view_mode_changed.emit(self.view_mode)
+        except Exception as e:
+            print(f"Error resetting zoom: {e}")
+
     def next_page(self):
         """Navigate to the next page."""
         if not self.doc:

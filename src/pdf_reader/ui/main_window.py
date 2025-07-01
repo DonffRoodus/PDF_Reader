@@ -1074,8 +1074,7 @@ class MainWindow(QMainWindow):
         """Reset zoom to 100%."""
         viewer = self.current_viewer()
         if viewer:
-            viewer.zoom_factor = 1.0
-            viewer.render_current_page()
+            viewer.reset_zoom()
             self.show_status_message("Zoom reset to 100%", 2000)
 
     def go_to_page_from_input(self):
