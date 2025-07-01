@@ -34,6 +34,7 @@ class PDFViewer(QWidget):
     view_mode_changed = pyqtSignal(ViewMode)
     current_page_changed_in_continuous_scroll = pyqtSignal(int)
     current_page_changed = pyqtSignal(int)  # General page change signal
+    zoom_changed = pyqtSignal(float)  # Signal for zoom factor changes
     bookmarks_changed = pyqtSignal()
     
     def __init__(self, file_path=None):
@@ -664,6 +665,9 @@ class PDFViewer(QWidget):
             else:
                 self.zoom_factor = 1.0
             self._continuous_render_zoom = self.zoom_factor
+            
+            # Emit zoom change signal
+            self.zoom_changed.emit(self.zoom_factor)
 
             for i in range(self.doc.page_count):
                 page_rect = self.doc.load_page(i).bound()
@@ -729,6 +733,9 @@ class PDFViewer(QWidget):
                 else:
                     current_render_zoom = 1.0
                 self._last_auto_zoom_level = current_render_zoom
+                # Emit zoom signal if zoom factor changed
+                if abs(current_render_zoom - self.zoom_factor) > 0.001:
+                    self.zoom_changed.emit(current_render_zoom)
             elif self.view_mode == ViewMode.FIT_WIDTH:
                 target_width = page_rect_left.width
                 if (
@@ -743,6 +750,9 @@ class PDFViewer(QWidget):
                 else:
                     current_render_zoom = 1.0
                 self._last_auto_zoom_level = current_render_zoom
+                # Emit zoom signal if zoom factor changed
+                if abs(current_render_zoom - self.zoom_factor) > 0.001:
+                    self.zoom_changed.emit(current_render_zoom)
                 
             mat = fitz.Matrix(current_render_zoom, current_render_zoom)
             pix_left = self.doc.load_page(self.current_page).get_pixmap(
@@ -860,6 +870,7 @@ class PDFViewer(QWidget):
                 )
                 self.render_page_with_annotations()
             self.view_mode_changed.emit(self.view_mode)
+            self.zoom_changed.emit(self.zoom_factor)  # Emit zoom change signal
         except Exception as e:
             print(f"Error zooming in: {e}")
 
@@ -884,6 +895,7 @@ class PDFViewer(QWidget):
                 )
                 self.render_page_with_annotations()
             self.view_mode_changed.emit(self.view_mode)
+            self.zoom_changed.emit(self.zoom_factor)  # Emit zoom change signal
         except Exception as e:
             print(f"Error zooming out: {e}")
 
@@ -909,6 +921,7 @@ class PDFViewer(QWidget):
                 self.render_page_with_annotations()
                 
             self.view_mode_changed.emit(self.view_mode)
+            self.zoom_changed.emit(self.zoom_factor)  # Emit zoom change signal
         except Exception as e:
             print(f"Error resetting zoom: {e}")
 

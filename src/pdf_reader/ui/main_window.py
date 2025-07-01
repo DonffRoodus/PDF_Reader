@@ -311,9 +311,15 @@ class MainWindow(QMainWindow):
             self.document_name_label.setText(document_name)        
         if current_page is not None and total_pages is not None:
             self.page_info_label.setText(f"Page: {current_page + 1} / {total_pages}")
+        elif current_page is None and total_pages is None:
+            # Reset page info if no document
+            self.page_info_label.setText("Page: - / -")
         
         if zoom_factor is not None:
             self.zoom_info_label.setText(f"Zoom: {int(zoom_factor * 100)}%")
+        elif zoom_factor is None and document_name == "No document":
+            # Reset zoom info if no document
+            self.zoom_info_label.setText("Zoom: -")
 
     def create_menus_and_toolbar(self):
         """Create the main menu bar and toolbar with improved accessibility."""
@@ -538,6 +544,41 @@ class MainWindow(QMainWindow):
         annotation_help_action = QAction("💡 Tip: Right-click annotations to delete individual ones", self)
         annotation_help_action.setEnabled(False)
         annotations_menu.addAction(annotation_help_action)
+        
+        # Layout submenu in View menu - add adaptive layout controls
+        view_mode_menu.addSeparator()
+        layout_submenu = view_mode_menu.addMenu("&Layout")
+        
+        # Adaptive layout toggle
+        adaptive_layout_action = QAction("&Adaptive Layout", self)
+        adaptive_layout_action.setCheckable(True)
+        adaptive_layout_action.setChecked(True)
+        adaptive_layout_action.setToolTip("Enable adaptive layout that adjusts to window size")
+        adaptive_layout_action.setStatusTip("Automatically rearrange interface based on window size")
+        adaptive_layout_action.triggered.connect(self.toggle_adaptive_layout)
+        layout_submenu.addAction(adaptive_layout_action)
+        
+        layout_submenu.addSeparator()
+        
+        # Manual layout modes
+        force_compact_action = QAction("Force &Compact Mode", self)
+        force_compact_action.setToolTip("Force compact layout (hides panels for maximum content space)")
+        force_compact_action.setStatusTip("Override window size and force compact layout")
+        force_compact_action.triggered.connect(self.force_compact_layout)
+        layout_submenu.addAction(force_compact_action)
+        
+        force_full_action = QAction("Force &Full Mode", self)
+        force_full_action.setToolTip("Force full layout (shows all panels)")
+        force_full_action.setStatusTip("Override window size and force full layout with all panels")
+        force_full_action.triggered.connect(self.force_full_layout)
+        layout_submenu.addAction(force_full_action)
+        
+        layout_submenu.addSeparator()
+        
+        layout_info_action = QAction("Show Layout &Info", self)
+        layout_info_action.setToolTip("Display current layout information")
+        layout_info_action.triggered.connect(self.show_layout_info)
+        layout_submenu.addAction(layout_info_action)
         
         # Help Menu
         help_menu = self.menuBar().addMenu("&Help")
@@ -968,12 +1009,14 @@ class MainWindow(QMainWindow):
             viewer.current_page_changed_in_continuous_scroll.connect(
                 self.update_page_info_from_signal
             )
+            viewer.current_page_changed.connect(self.update_page_info_from_signal)
             viewer.current_page_changed_in_continuous_scroll.connect(
                 lambda: self.schedule_progress_save()
             )
             viewer.current_page_changed.connect(
                 lambda: self.schedule_progress_save()
             )
+            viewer.zoom_changed.connect(self.update_zoom_info)
             viewer.bookmarks_changed.connect(self.update_bookmarks)
 
             # Add tab with truncated filename for display
@@ -992,6 +1035,12 @@ class MainWindow(QMainWindow):
                 viewer.doc.page_count if viewer.doc else 0,
                 viewer.zoom_factor
             )
+            
+            # Force an immediate update of the status bar with real-time information
+            self.update_page_info()
+            self.update_toc()
+            self.update_bookmarks()
+            self.update_view_menu_state()
             
             # Enable toolbar actions
             self.prev_page_action.setEnabled(True)
@@ -1063,12 +1112,14 @@ class MainWindow(QMainWindow):
         viewer = self.current_viewer()
         if viewer:
             viewer.zoom_in()
+            self.show_status_message("Zoomed in", 1000)
 
     def zoom_out(self):
         """Zoom out on the current viewer."""
         viewer = self.current_viewer()
         if viewer:
             viewer.zoom_out()
+            self.show_status_message("Zoomed out", 1000)
 
     def reset_zoom(self):
         """Reset zoom to 100%."""
@@ -1311,6 +1362,24 @@ class MainWindow(QMainWindow):
     def update_page_info_from_signal(self, page_num):
         """Update page info from continuous scroll signal."""
         self.update_page_info()
+        # Also update status bar with current document info
+        viewer = self.current_viewer()
+        if viewer and viewer.doc:
+            self.update_document_status(
+                None,  # Don't change document name
+                viewer.current_page,
+                viewer.doc.page_count,
+                None  # Don't change zoom here
+            )
+
+    def update_zoom_info(self, zoom_factor):
+        """Update zoom information in status bar when zoom changes."""
+        self.update_document_status(
+            None,  # Don't change document name
+            None,  # Don't change page info
+            None,  # Don't change total pages
+            zoom_factor
+        )
 
     def on_tab_changed(self, index):
         """Handle tab change events."""
@@ -1318,6 +1387,19 @@ class MainWindow(QMainWindow):
         self.update_toc()
         self.update_bookmarks()
         self.update_view_menu_state()
+        
+        # Update status bar for the new tab
+        viewer = self.current_viewer()
+        if viewer and viewer.doc:
+            document_name = os.path.basename(viewer.file_path) if viewer.file_path else "Unknown Document"
+            self.update_document_status(
+                document_name,
+                viewer.current_page,
+                viewer.doc.page_count,
+                viewer.zoom_factor
+            )
+        else:
+            self.update_document_status("No document", None, None, None)
 
     # Helper methods for improved UX and missing functionality
     def show_keyboard_shortcuts(self):
@@ -1607,4 +1689,380 @@ class MainWindow(QMainWindow):
         toolbar = self.findChild(QToolBar, toolbar_name)
         if toolbar:
             toolbar.setVisible(visible)
+
+    def resizeEvent(self, event):
+        """Handle window resize events to rearrange widgets dynamically."""
+        super().resizeEvent(event)
+        
+        # Check if adaptive layout is enabled
+        if not getattr(self, '_adaptive_layout_enabled', True):
+            return
+        
+        # Get the new window size
+        new_size = event.size()
+        window_width = new_size.width()
+        window_height = new_size.height()
+        
+        # Define size thresholds for different layouts
+        SMALL_WIDTH_THRESHOLD = 800
+        MEDIUM_WIDTH_THRESHOLD = 1200
+        SMALL_HEIGHT_THRESHOLD = 600
+        MEDIUM_HEIGHT_THRESHOLD = 800
+        
+        # Determine window size category
+        is_small_width = window_width < SMALL_WIDTH_THRESHOLD
+        is_medium_width = SMALL_WIDTH_THRESHOLD <= window_width < MEDIUM_WIDTH_THRESHOLD
+        is_large_width = window_width >= MEDIUM_WIDTH_THRESHOLD
+        
+        is_small_height = window_height < SMALL_HEIGHT_THRESHOLD
+        is_medium_height = SMALL_HEIGHT_THRESHOLD <= window_height < MEDIUM_HEIGHT_THRESHOLD
+        is_large_height = window_height >= MEDIUM_HEIGHT_THRESHOLD
+        
+        # Manage dock widget visibility and positions based on window size
+        self._rearrange_dock_widgets(is_small_width, is_medium_width, is_large_width,
+                                   is_small_height, is_medium_height, is_large_height)
+        
+        # Adjust toolbar layout
+        self._adjust_toolbar_layout(is_small_width, is_small_height)
+        
+        # Update tab widget styling for smaller screens
+        self._update_tab_styling(is_small_width)
+        
+        # Show status message about layout change
+        if hasattr(self, 'show_status_message'):
+            if is_small_width:
+                self.show_status_message("Compact layout enabled", 2000)
+            elif is_large_width:
+                self.show_status_message("Full layout enabled", 2000)
+
+    def _rearrange_dock_widgets(self, is_small_width, is_medium_width, is_large_width,
+                               is_small_height, is_medium_height, is_large_height):
+        """Rearrange dock widgets based on window size."""
+        
+        # For very small windows, hide all dock widgets to maximize content area
+        if is_small_width and is_small_height:
+            if hasattr(self, 'toc_dock'):
+                self.toc_dock.setVisible(False)
+            if hasattr(self, 'bookmarks_dock'):
+                self.bookmarks_dock.setVisible(False)
+            if hasattr(self, 'annotations_dock'):
+                self.annotations_dock.setVisible(False)
+        
+        # For small width but adequate height, show only annotations dock at bottom
+        elif is_small_width and not is_small_height:
+            if hasattr(self, 'toc_dock'):
+                self.toc_dock.setVisible(False)
+            if hasattr(self, 'bookmarks_dock'):
+                self.bookmarks_dock.setVisible(False)
+            if hasattr(self, 'annotations_dock'):
+                self.annotations_dock.setVisible(True)
+                # Move annotations dock to bottom for narrow windows
+                self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.annotations_dock)
+        
+        # For medium width windows, show bookmarks and annotations
+        elif is_medium_width:
+            if hasattr(self, 'toc_dock'):
+                self.toc_dock.setVisible(False)  # TOC takes up too much space
+            if hasattr(self, 'bookmarks_dock'):
+                self.bookmarks_dock.setVisible(True)
+                # Keep bookmarks on the left
+                self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.bookmarks_dock)
+            if hasattr(self, 'annotations_dock'):
+                self.annotations_dock.setVisible(True)
+                if is_small_height:
+                    # For medium width but small height, put annotations on right
+                    self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.annotations_dock)
+                else:
+                    # For medium width and adequate height, put annotations at bottom
+                    self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.annotations_dock)
+        
+        # For large windows, show all dock widgets optimally positioned
+        elif is_large_width:
+            # Show all dock widgets
+            if hasattr(self, 'toc_dock'):
+                self.toc_dock.setVisible(True)
+                self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.toc_dock)
+            if hasattr(self, 'bookmarks_dock'):
+                self.bookmarks_dock.setVisible(True)
+                self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.bookmarks_dock)
+            if hasattr(self, 'annotations_dock'):
+                self.annotations_dock.setVisible(True)
+                if is_large_height:
+                    # For large windows, put annotations on the right
+                    self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.annotations_dock)
+                else:
+                    # For large width but smaller height, put annotations at bottom
+                    self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.annotations_dock)
+            
+            # Stack TOC and bookmarks together on the left if both are visible
+            if hasattr(self, 'toc_dock') and hasattr(self, 'bookmarks_dock'):
+                if self.toc_dock.isVisible() and self.bookmarks_dock.isVisible():
+                    self.tabifyDockWidget(self.toc_dock, self.bookmarks_dock)
+
+    def _adjust_toolbar_layout(self, is_small_width, is_small_height):
+        """Adjust toolbar layout for different window sizes."""
+        # Find all toolbars
+        toolbars = self.findChildren(QToolBar)
+        
+        for toolbar in toolbars:
+            if is_small_width:
+                # For small windows, make toolbars more compact
+                toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+                toolbar.setIconSize(QSize(16, 16))  # Smaller icons
+            elif is_small_height:
+                # For small height, still use compact icons but allow text when width permits
+                toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+                toolbar.setIconSize(QSize(20, 20))
+            else:
+                # For larger windows, use text beside icons for better usability
+                toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+                toolbar.setIconSize(QSize(24, 24))
+
+    def _update_tab_styling(self, is_small_width):
+        """Update tab widget styling based on window size."""
+        if is_small_width:
+            # More compact tab styling for small windows
+            self.tab_widget.setStyleSheet("""
+                QTabWidget::pane {
+                    border: 1px solid #c0c0c0;
+                }
+                QTabBar::tab {
+                    background: #f0f0f0;
+                    border: 1px solid #c0c0c0;
+                    padding: 4px 8px;
+                    margin-right: 1px;
+                    min-width: 60px;
+                    max-width: 120px;
+                    font-size: 11px;
+                }
+                QTabBar::tab:selected {
+                    background: #ffffff;
+                    border-bottom: 1px solid #ffffff;
+                }
+                QTabBar::tab:hover {
+                    background: #e0e0e0;
+                }
+                QTabBar::close-button {
+                    width: 12px;
+                    height: 12px;
+                    border: 1px solid transparent;
+                    border-radius: 6px;
+                    background: #f0f0f0;
+                    margin: 1px;
+                }
+                QTabBar::close-button:hover {
+                    background: #ff6666;
+                    border: 1px solid #cc0000;
+                }
+            """)
+        else:
+            # Standard tab styling for larger windows (restore original)
+            self.tab_widget.setStyleSheet("""
+                QTabWidget::pane {
+                    border: 1px solid #c0c0c0;
+                }
+                QTabBar::tab {
+                    background: #f0f0f0;
+                    border: 1px solid #c0c0c0;
+                    padding: 8px 12px;
+                    margin-right: 2px;
+                    min-width: 100px;
+                }
+                QTabBar::tab:selected {
+                    background: #ffffff;
+                    border-bottom: 1px solid #ffffff;
+                }
+                QTabBar::tab:hover {
+                    background: #e0e0e0;
+                }
+                QTabBar::close-button {
+                    width: 16px;
+                    height: 16px;
+                    border: 1px solid transparent;
+                    border-radius: 8px;
+                    background: #f0f0f0;
+                    margin: 2px;
+                }
+                QTabBar::close-button:hover {
+                    background: #ff6666;
+                    border: 1px solid #cc0000;
+                }
+            """)
+
+    def closeEvent(self, event):
+        """Handle application close event."""
+        # Save window state before closing
+        self.save_window_state()
+        
+        # Save any open documents' reading progress
+        for i in range(self.tab_widget.count()):
+            viewer = self.tab_widget.widget(i)
+            if hasattr(viewer, 'file_path') and viewer.file_path:
+                # Save current page and zoom level using the correct method
+                config.update_document_progress(
+                    viewer.file_path,
+                    viewer.current_page,
+                    viewer.doc.page_count if viewer.doc else 0
+                )
+        
+        # Save the configuration
+        config.save()
+        
+        # Accept the close event
+        event.accept()
+
+    def save_dock_state(self):
+        """Save current dock widget state to configuration."""
+        dock_state = {
+            'toc_visible': self.toc_dock.isVisible() if hasattr(self, 'toc_dock') else False,
+            'bookmarks_visible': self.bookmarks_dock.isVisible() if hasattr(self, 'bookmarks_dock') else False,
+            'annotations_visible': self.annotations_dock.isVisible() if hasattr(self, 'annotations_dock') else False,
+            'toc_area': int(self.dockWidgetArea(self.toc_dock)) if hasattr(self, 'toc_dock') and self.toc_dock.isVisible() else 1,
+            'bookmarks_area': int(self.dockWidgetArea(self.bookmarks_dock)) if hasattr(self, 'bookmarks_dock') and self.bookmarks_dock.isVisible() else 1,
+            'annotations_area': int(self.dockWidgetArea(self.annotations_dock)) if hasattr(self, 'annotations_dock') and self.annotations_dock.isVisible() else 1,
+        }
+        config.set('dock_state', dock_state)
+
+    def restore_dock_state(self):
+        """Restore dock widget state from configuration."""
+        dock_state = config.get('dock_state', {})
+        
+        if hasattr(self, 'toc_dock'):
+            self.toc_dock.setVisible(dock_state.get('toc_visible', False))
+            area = Qt.DockWidgetArea(dock_state.get('toc_area', 1))
+            self.addDockWidget(area, self.toc_dock)
+            
+        if hasattr(self, 'bookmarks_dock'):
+            self.bookmarks_dock.setVisible(dock_state.get('bookmarks_visible', False))
+            area = Qt.DockWidgetArea(dock_state.get('bookmarks_area', 1))
+            self.addDockWidget(area, self.bookmarks_dock)
+            
+        if hasattr(self, 'annotations_dock'):
+            self.annotations_dock.setVisible(dock_state.get('annotations_visible', True))
+            area = Qt.DockWidgetArea(dock_state.get('annotations_area', 1))
+            self.addDockWidget(area, self.annotations_dock)
+
+    def toggle_adaptive_layout(self):
+        """Toggle adaptive layout mode on/off."""
+        if not hasattr(self, '_adaptive_layout_enabled'):
+            self._adaptive_layout_enabled = True
+        
+        self._adaptive_layout_enabled = not self._adaptive_layout_enabled
+        
+        if self._adaptive_layout_enabled:
+            self.show_status_message("Adaptive layout enabled", 3000)
+            # Force a resize event to apply current layout
+            from PyQt6.QtGui import QResizeEvent
+            current_size = self.size()
+            resize_event = QResizeEvent(current_size, current_size)
+            self.resizeEvent(resize_event)
+        else:
+            self.show_status_message("Adaptive layout disabled", 3000)
+            # Restore saved dock state
+            self.restore_dock_state()
+
+    def force_compact_layout(self):
+        """Force compact layout regardless of window size."""
+        self._rearrange_dock_widgets(True, False, False, True, False, False)
+        self._adjust_toolbar_layout(True, True)
+        self._update_tab_styling(True)
+        self.show_status_message("Compact layout applied", 3000)
+
+    def force_full_layout(self):
+        """Force full layout regardless of window size."""
+        self._rearrange_dock_widgets(False, False, True, False, False, True)
+        self._adjust_toolbar_layout(False, False)
+        self._update_tab_styling(False)
+        self.show_status_message("Full layout applied", 3000)
+
+    def get_layout_info(self):
+        """Get current layout information for debugging."""
+        size = self.size()
+        dock_info = {}
+        
+        if hasattr(self, 'toc_dock'):
+            dock_info['toc'] = {
+                'visible': self.toc_dock.isVisible(),
+                'area': int(self.dockWidgetArea(self.toc_dock)) if self.toc_dock.isVisible() else None
+            }
+        
+        if hasattr(self, 'bookmarks_dock'):
+            dock_info['bookmarks'] = {
+                'visible': self.bookmarks_dock.isVisible(),
+                'area': int(self.dockWidgetArea(self.bookmarks_dock)) if self.bookmarks_dock.isVisible() else None
+            }
+            
+        if hasattr(self, 'annotations_dock'):
+            dock_info['annotations'] = {
+                'visible': self.annotations_dock.isVisible(),
+                'area': int(self.dockWidgetArea(self.annotations_dock)) if self.annotations_dock.isVisible() else None
+            }
+        
+        return {
+            'window_size': {'width': size.width(), 'height': size.height()},
+            'dock_widgets': dock_info,
+            'adaptive_enabled': getattr(self, '_adaptive_layout_enabled', True)
+        }
+
+    def show_layout_info(self):
+        """Show current layout information in a dialog."""
+        info = self.get_layout_info()
+        
+        info_text = f"""
+📏 Current Layout Information
+
+🖥️ Window Size: {info['window_size']['width']} × {info['window_size']['height']} pixels
+
+🎛️ Adaptive Layout: {'Enabled' if info['adaptive_enabled'] else 'Disabled'}
+
+📋 Dock Widgets:
+"""
+        
+        for name, data in info['dock_widgets'].items():
+            area_names = {
+                1: "Left", 2: "Right", 4: "Top", 8: "Bottom"
+            }
+            area_name = area_names.get(data['area'], "Unknown") if data['area'] else "Hidden"
+            status = "Visible" if data['visible'] else "Hidden"
+            info_text += f"  • {name.title()}: {status}"
+            if data['visible']:
+                info_text += f" ({area_name})"
+            info_text += "\n"
+        
+        info_text += f"""
+💡 Layout Thresholds:
+  • Small width: < 800px (current: {info['window_size']['width']}px)
+  • Medium width: 800-1200px
+  • Large width: > 1200px
+  • Small height: < 600px (current: {info['window_size']['height']}px)
+  • Medium height: 600-800px
+  • Large height: > 800px
+
+🎯 Current Category: """
+        
+        width = info['window_size']['width']
+        height = info['window_size']['height']
+        
+        if width < 800:
+            width_cat = "Small"
+        elif width < 1200:
+            width_cat = "Medium"
+        else:
+            width_cat = "Large"
+            
+        if height < 600:
+            height_cat = "Small"
+        elif height < 800:
+            height_cat = "Medium"
+        else:
+            height_cat = "Large"
+            
+        info_text += f"{width_cat} Width, {height_cat} Height"
+        
+        # Show in message box
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Layout Information")
+        msg_box.setText(info_text)
+        msg_box.setIcon(QMessageBox.Icon.Information)
+        msg_box.exec()
 
